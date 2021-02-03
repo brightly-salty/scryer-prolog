@@ -23,28 +23,25 @@ pub struct DebrayAllocator {
 }
 
 impl DebrayAllocator {
-    fn is_curr_arg_distinct_from(&self, var: &Var) -> bool {
-        match self.contents.get(&self.arg_c) {
-            Some(t_var) if **t_var != *var => true,
-            _ => false,
-        }
+    fn is_curr_arg_distinct_from(&self, var: &str) -> bool {
+        matches!(self.contents.get(&self.arg_c), Some(t_var) if **t_var != var)
     }
 
-    fn occurs_shallowly_in_head(&self, var: &Var, r: usize) -> bool {
-        match self.bindings.get(var).unwrap() {
-            &VarData::Temp(_, _, ref tvd) => tvd.use_set.contains(&(GenContext::Head, r)),
-            _ => false,
+    fn occurs_shallowly_in_head(&self, var: &str, r: usize) -> bool {
+        if let VarData::Temp(_, _, ref tvd) = *self.bindings.get(&var.to_owned()).unwrap() {
+            tvd.use_set.contains(&(GenContext::Head, r))
+        } else {
+            false
         }
     }
 
     #[inline]
     fn is_in_use(&self, r: usize) -> bool {
-        let in_use_range = r <= self.arity && r >= self.arg_c;
-        in_use_range || self.in_use.contains(&r)
+        (r <= self.arity && r >= self.arg_c) || self.in_use.contains(&r)
     }
 
-    fn alloc_with_cr(&self, var: &Var) -> usize {
-        match self.bindings.get(var) {
+    fn alloc_with_cr(&self, var: &str) -> usize {
+        match self.bindings.get(&var.to_owned()) {
             Some(&VarData::Temp(_, _, ref tvd)) => {
                 for &(_, reg) in tvd.use_set.iter() {
                     if !self.is_in_use(reg) {
@@ -55,11 +52,9 @@ impl DebrayAllocator {
                 let mut result = 0;
 
                 for reg in self.temp_lb.. {
-                    if !self.is_in_use(reg) {
-                        if !tvd.no_use_set.contains(&reg) {
-                            result = reg;
-                            break;
-                        }
+                    if !self.is_in_use(reg) && !tvd.no_use_set.contains(&reg) {
+                        result = reg;
+                        break;
                     }
                 }
 
@@ -69,8 +64,8 @@ impl DebrayAllocator {
         }
     }
 
-    fn alloc_with_ca(&self, var: &Var) -> usize {
-        match self.bindings.get(var) {
+    fn alloc_with_ca(&self, var: &str) -> usize {
+        match self.bindings.get(&var.to_owned()) {
             Some(&VarData::Temp(_, _, ref tvd)) => {
                 for &(_, reg) in tvd.use_set.iter() {
                     if !self.is_in_use(reg) {
@@ -81,13 +76,12 @@ impl DebrayAllocator {
                 let mut result = 0;
 
                 for reg in self.temp_lb.. {
-                    if !self.is_in_use(reg) {
-                        if !tvd.no_use_set.contains(&reg) {
-                            if !tvd.conflict_set.contains(&reg) {
-                                result = reg;
-                                break;
-                            }
-                        }
+                    if !self.is_in_use(reg)
+                        && !tvd.no_use_set.contains(&reg)
+                        && !tvd.conflict_set.contains(&reg)
+                    {
+                        result = reg;
+                        break;
                     }
                 }
 
@@ -110,7 +104,7 @@ impl DebrayAllocator {
                 // (GenContext::Last(_), k) is in t_var.use_set.
 
                 let tvd = self.bindings.get(t_var).unwrap();
-                if let &VarData::Temp(_, _, ref tvd) = tvd {
+                if let VarData::Temp(_, _, ref tvd) = *tvd {
                     if !tvd.use_set.contains(&(GenContext::Last(chunk_num), k)) {
                         return Some((t_var.clone(), self.alloc_with_ca(t_var)));
                     }
@@ -126,29 +120,26 @@ impl DebrayAllocator {
     where
         Target: CompilationTarget<'a>,
     {
-        match self.alloc_in_last_goal_hint(chunk_num) {
-            Some((var, r)) => {
-                let k = self.arg_c;
+        if let Some((var, r)) = self.alloc_in_last_goal_hint(chunk_num) {
+            let k = self.arg_c;
 
-                if r != k {
-                    let r = RegType::Temp(r);
+            if r != k {
+                let r = RegType::Temp(r);
 
-                    target.push(Target::move_to_register(r, k));
+                target.push(Target::move_to_register(r, k));
 
-                    self.contents.swap_remove(&k);
-                    self.contents.insert(r.reg_num(), var.clone());
+                self.contents.swap_remove(&k);
+                self.contents.insert(r.reg_num(), var.clone());
 
-                    self.record_register(var, r);
-                    self.in_use.insert(r.reg_num());
-                }
+                self.record_register(var, r);
+                self.in_use.insert(r.reg_num());
             }
-            _ => {}
         };
     }
 
     fn alloc_reg_to_var<'a, Target>(
         &mut self,
-        var: &Var,
+        var: &str,
         lvl: Level,
         term_loc: GenContext,
         target: &mut Vec<Target>,
@@ -192,11 +183,11 @@ impl DebrayAllocator {
         final_index
     }
 
-    fn in_place(&self, var: &Var, term_loc: GenContext, r: RegType, k: usize) -> bool {
+    fn in_place(&self, var: &str, term_loc: GenContext, r: RegType, k: usize) -> bool {
         match term_loc {
             GenContext::Head if !r.is_perm() => r.reg_num() == k,
-            _ => match self.bindings().get(var).unwrap() {
-                &VarData::Temp(_, o, _) if r.reg_num() == k => o == k,
+            _ => match *self.bindings().get(&var.to_owned()).unwrap() {
+                VarData::Temp(_, o, _) if r.reg_num() == k => o == k,
                 _ => false,
             },
         }
@@ -293,9 +284,7 @@ impl<'a> Allocator<'a> for DebrayAllocator {
 
                 (pr, true)
             }
-            r => {
-                (r, false)
-            }
+            r => (r, false),
         };
 
         self.mark_reserved_var(var, lvl, cell, term_loc, target, r, is_new_var);
@@ -351,7 +340,7 @@ impl<'a> Allocator<'a> for DebrayAllocator {
             let o = r.reg_num();
 
             self.contents.insert(o, var.clone());
-            self.record_register(var.clone(), r);
+            self.record_register(var, r);
             self.in_use.insert(o);
         }
     }
@@ -383,12 +372,12 @@ impl<'a> Allocator<'a> for DebrayAllocator {
         self.bindings
     }
 
-    fn reset_at_head(&mut self, args: &Vec<Box<Term>>) {
+    fn reset_at_head(&mut self, args: &[Term]) {
         self.reset_arg(args.len());
         self.arity = args.len();
 
         for (idx, arg) in args.iter().enumerate() {
-            if let &Term::Var(_, ref var) = arg.as_ref() {
+            if let Term::Var(_, ref var) = arg {
                 let r = self.get(var.clone());
 
                 if !r.is_perm() && r.reg_num() == 0 {

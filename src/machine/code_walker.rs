@@ -7,8 +7,10 @@ fn capture_offset(line: &Line, index: usize, stack: &mut Vec<usize>) -> bool {
         &Line::Choice(ChoiceInstruction::TryMeElse(offset)) if offset > 0 => {
             stack.push(index + offset);
         }
-        &Line::Choice(ChoiceInstruction::DefaultRetryMeElse(offset)) |
-        &Line::Choice(ChoiceInstruction::RetryMeElse(offset)) if offset > 0 => {
+        &Line::Choice(ChoiceInstruction::DefaultRetryMeElse(offset))
+        | &Line::Choice(ChoiceInstruction::RetryMeElse(offset))
+            if offset > 0 =>
+        {
             stack.push(index + offset);
         }
         &Line::Control(ControlInstruction::JmpBy(_, offset, _, false)) => {
@@ -18,8 +20,8 @@ fn capture_offset(line: &Line, index: usize, stack: &mut Vec<usize>) -> bool {
             stack.push(index + offset);
             return true;
         }
-        &Line::Control(ControlInstruction::Proceed) |
-        &Line::Control(ControlInstruction::CallClause(_, _, _, true, _)) => {
+        &Line::Control(ControlInstruction::Proceed)
+        | &Line::Control(ControlInstruction::CallClause(_, _, _, true, _)) => {
             return true;
         }
         &Line::Control(ControlInstruction::RevJmpBy(offset)) => {
@@ -29,8 +31,7 @@ fn capture_offset(line: &Line, index: usize, stack: &mut Vec<usize>) -> bool {
                 return true;
             }
         }
-        _ => {
-        }
+        _ => {}
     };
 
     false
@@ -40,8 +41,7 @@ fn capture_offset(line: &Line, index: usize, stack: &mut Vec<usize>) -> bool {
  * begin in code at the offset p. Each instruction is passed to the
  * walker function.
  */
-pub fn walk_code(code: &Code, p: usize, mut walker: impl FnMut(&Line))
-{
+pub fn walk_code(code: &[Line], p: usize, mut walker: impl FnMut(&Line)) {
     let mut stack = vec![p];
     let mut visited_indices = IndexSet::new();
 
@@ -52,7 +52,7 @@ pub fn walk_code(code: &Code, p: usize, mut walker: impl FnMut(&Line))
             visited_indices.insert(first_index);
         }
 
-        for (index, instr) in code[first_index ..].iter().enumerate() {
+        for (index, instr) in code[first_index..].iter().enumerate() {
             walker(instr);
 
             if capture_offset(instr, first_index + index, &mut stack) {

@@ -36,7 +36,7 @@ pub enum TopLevel {
 #[derive(Debug, Clone, Copy)]
 pub enum AppendOrPrepend {
     Append,
-    Prepend
+    Prepend,
 }
 
 impl AppendOrPrepend {
@@ -68,7 +68,7 @@ impl Level {
 #[derive(Debug, Clone)]
 pub enum QueryTerm {
     // register, clause type, subterms, use default call policy.
-    Clause(Cell<RegType>, ClauseType, Vec<Box<Term>>, bool),
+    Clause(Cell<RegType>, ClauseType, Vec<Term>, bool),
     BlockedCut, // a cut which is 'blocked by letters', like the P term in P -> Q.
     UnblockedCut(Cell<VarReg>),
     GetLevelAndUnify(Cell<VarReg>, Rc<Var>),
@@ -77,25 +77,24 @@ pub enum QueryTerm {
 
 impl QueryTerm {
     pub fn set_default_caller(&mut self) {
-        match self {
-            &mut QueryTerm::Clause(_, _, _, ref mut use_default_cp) => *use_default_cp = true,
-            _ => {}
+        if let QueryTerm::Clause(_, _, _, ref mut use_default_cp) = *self {
+            *use_default_cp = true
         }
     }
 
     pub fn arity(&self) -> usize {
-        match self {
-            &QueryTerm::Clause(_, _, ref subterms, ..) => subterms.len(),
-            &QueryTerm::BlockedCut | &QueryTerm::UnblockedCut(..) => 0,
-            &QueryTerm::Jump(ref vars) => vars.len(),
-            &QueryTerm::GetLevelAndUnify(..) => 1,
+        match *self {
+            QueryTerm::Clause(_, _, ref subterms, ..) => subterms.len(),
+            QueryTerm::BlockedCut | QueryTerm::UnblockedCut(..) => 0,
+            QueryTerm::Jump(ref vars) => vars.len(),
+            QueryTerm::GetLevelAndUnify(..) => 1,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Rule {
-    pub head: (ClauseName, Vec<Box<Term>>, QueryTerm),
+    pub head: (ClauseName, Vec<Term>, QueryTerm),
     pub clauses: Vec<QueryTerm>,
 }
 
@@ -113,14 +112,11 @@ impl ListingSource {
 }
 
 pub trait ClauseInfo {
-    fn is_consistent(&self, clauses: &Vec<PredicateClause>) -> bool {
-        match clauses.first() {
-            Some(cl) => {
-                self.name() == cl.name() && self.arity() == cl.arity()
-            }
-            None => {
-                true
-            }
+    fn is_consistent(&self, clauses: &[PredicateClause]) -> bool {
+        if let Some(cl) = clauses.first() {
+            self.name() == cl.name() && self.arity() == cl.arity()
+        } else {
+            true
         }
     }
 
@@ -132,46 +128,32 @@ impl ClauseInfo for Term {
     fn name(&self) -> Option<ClauseName> {
         match self {
             Term::Clause(_, ref name, ref terms, _) => {
-                match name.as_str() {
-                    ":-" => {
-                        match terms.len() {
-                            1 => None, // a declaration.
-                            2 => terms[0].name(),
-                            _ => Some(clause_name!(":-")),
-                        }
+                if let ":-" = name.as_str() {
+                    match terms.len() {
+                        1 => None, // a declaration.
+                        2 => terms[0].name(),
+                        _ => Some(clause_name!(":-")),
                     }
-                    _ => {
-                        Some(name.clone())
-                    }
+                } else {
+                    Some(name.clone())
                 }
             }
-            Term::Constant(_, Constant::Atom(ref name, _)) => {
-                Some(name.clone())
-            }
-            _ => {
-                None
-            }
+            Term::Constant(_, Constant::Atom(ref name, _)) => Some(name.clone()),
+            _ => None,
         }
     }
 
     fn arity(&self) -> usize {
         match self {
-            Term::Clause(_, ref name, ref terms, _) =>
-                match name.as_str() {
-                    ":-" => {
-                        match terms.len() {
-                            1 => 0,
-                            2 => terms[0].arity(),
-                            _ => terms.len(),
-                        }
-                    }
-                    _ => {
-                        terms.len()
-                    }
+            Term::Clause(_, ref name, ref terms, _) => match name.as_str() {
+                ":-" => match terms.len() {
+                    1 => 0,
+                    2 => terms[0].arity(),
+                    _ => terms.len(),
                 },
-            _ => {
-                0
-            }
+                _ => terms.len(),
+            },
+            _ => 0,
         }
     }
 }
@@ -188,24 +170,16 @@ impl ClauseInfo for Rule {
 
 impl ClauseInfo for PredicateClause {
     fn name(&self) -> Option<ClauseName> {
-        match self {
-            &PredicateClause::Fact(ref term, ..) => {
-                term.name()
-            }
-            &PredicateClause::Rule(ref rule, ..) => {
-                rule.name()
-            }
+        match *self {
+            Self::Fact(ref term, ..) => term.name(),
+            Self::Rule(ref rule, ..) => rule.name(),
         }
     }
 
     fn arity(&self) -> usize {
-        match self {
-            &PredicateClause::Fact(ref term, ..) => {
-                term.arity()
-            }
-            &PredicateClause::Rule(ref rule, ..) => {
-                rule.arity()
-            }
+        match *self {
+            Self::Fact(ref term, ..) => term.arity(),
+            Self::Rule(ref rule, ..) => rule.arity(),
         }
     }
 }
@@ -220,14 +194,15 @@ pub enum PredicateClause {
 
 impl PredicateClause {
     // TODO: add this to `Term` in `prolog_parser` like `first_arg`.
-    pub fn args(&self) -> Option<&[Box<Term>]> {
+    pub fn args(&self) -> Option<&[Term]> {
         match *self {
             PredicateClause::Fact(ref term, ..) => {
-                match term {
-                    Term::Clause(_, _, args, _) => Some(&args),
-                    _ => None,
+                if let Term::Clause(_, _, args, _) = term {
+                    Some(&args)
+                } else {
+                    None
                 }
-            },
+            }
             PredicateClause::Rule(ref rule, ..) => {
                 if rule.head.1.is_empty() {
                     None
@@ -239,21 +214,15 @@ impl PredicateClause {
     }
 
     pub fn arity(&self) -> usize {
-        match self {
-            &PredicateClause::Fact(ref term, ..) => {
-                term.arity()
-            }
-            &PredicateClause::Rule(ref rule, ..) => {
+        match *self {
+            PredicateClause::Fact(ref term, ..) => term.arity(),
+            PredicateClause::Rule(ref rule, ..) => {
                 if rule.head.0.as_str() == ":" && rule.head.1.len() == 2 {
-                    match (rule.head.1)[0].as_ref() {
-                        &Term::Constant(_, Constant::Atom(..)) => {
-                        }
-                        _ => {
-                            return 2;
-                        }
+                    if let Term::Constant(_, Constant::Atom(..)) = (rule.head.1)[0] {
+                        (rule.head.1)[1].arity()
+                    } else {
+                        2
                     }
-
-                    (rule.head.1)[1].arity()
                 } else {
                     rule.head.1.len()
                 }
@@ -262,9 +231,9 @@ impl PredicateClause {
     }
 
     pub fn name(&self) -> Option<ClauseName> {
-        match self {
-            &PredicateClause::Fact(ref term, ..) => term.name(),
-            &PredicateClause::Rule(ref rule, ..) => Some(rule.head.0.clone()),
+        match &self {
+            Self::Fact(ref term, ..) => term.name(),
+            Self::Rule(ref rule, ..) => Some(rule.head.0.clone()),
         }
     }
 }
@@ -278,10 +247,10 @@ pub enum ModuleSource {
 impl ModuleSource {
     pub fn as_functor_stub(&self) -> MachineStub {
         match self {
-            ModuleSource::Library(ref name) => {
+            Self::Library(ref name) => {
                 functor!("library", [clause_name(name.clone())])
             }
-            ModuleSource::File(ref name) => {
+            Self::File(ref name) => {
                 functor!(clause_name(name.clone()))
             }
         }
@@ -321,7 +290,7 @@ pub enum Declaration {
 pub struct OpDecl {
     pub prec: usize,
     pub spec: Specifier,
-    pub name: ClauseName
+    pub name: ClauseName,
 }
 
 impl OpDecl {
@@ -345,23 +314,20 @@ impl OpDecl {
             XFY | XFX | YFX => Fixity::In,
             XF | YF => Fixity::Post,
             FX | FY => Fixity::Pre,
-            _ => unreachable!()
+            _ => unreachable!(),
         }
     }
 
     pub fn insert_into_op_dir(&self, op_dir: &mut OpDir) -> Option<(usize, Specifier)> {
         let key = (self.name.clone(), self.fixity());
 
-        match op_dir.get(&key) {
-            Some(cell) => {
-                return Some(cell.shared_op_desc().replace((self.prec, self.spec)));
-            }
-            None => {
-            }
+        if let Some(cell) = op_dir.get(&key) {
+            return Some(cell.shared_op_desc().replace((self.prec, self.spec)));
         }
 
-        op_dir.insert(key, OpDirValue::new(self.spec, self.prec))
-              .map(|op_dir_value| op_dir_value.shared_op_desc().get())
+        op_dir
+            .insert(key, OpDirValue::new(self.spec, self.prec))
+            .map(|op_dir_value| op_dir_value.shared_op_desc().get())
     }
 
     pub fn submit(
@@ -371,7 +337,7 @@ impl OpDecl {
     ) -> Result<(), SessionError> {
         let (spec, name) = (self.spec, self.name.clone());
 
-        if is_infix!(spec) {
+        if is_infix(spec) {
             if let Some(desc) = existing_desc {
                 if desc.post > 0 {
                     return Err(SessionError::OpIsInfixAndPostFix(name));
@@ -379,7 +345,7 @@ impl OpDecl {
             }
         }
 
-        if is_postfix!(spec) {
+        if is_postfix(spec) {
             if let Some(desc) = existing_desc {
                 if desc.inf > 0 {
                     return Err(SessionError::OpIsInfixAndPostFix(name));
@@ -419,11 +385,7 @@ pub fn fetch_op_spec_from_existing(
     spec.or_else(|| fetch_op_spec(name, arity, op_dir))
 }
 
-pub fn fetch_op_spec(
-    name: ClauseName,
-    arity: usize,
-    op_dir: &OpDir,
-) -> Option<SharedOpDesc> {
+pub fn fetch_op_spec(name: ClauseName, arity: usize, op_dir: &OpDir) -> Option<SharedOpDesc> {
     match arity {
         2 => op_dir
             .get(&(name, Fixity::In))
@@ -442,7 +404,7 @@ pub fn fetch_op_spec(
             }
 
             op_dir
-                .get(&(name.clone(), Fixity::Post))
+                .get(&(name, Fixity::Post))
                 .and_then(|OpDirValue(spec)| {
                     if spec.prec() > 0 {
                         Some(spec.clone())
@@ -451,9 +413,7 @@ pub fn fetch_op_spec(
                     }
                 })
         }
-        _ => {
-            None
-        }
+        _ => None,
     }
 }
 
@@ -499,7 +459,6 @@ impl Module {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub enum Number {
     Float(OrderedFloat<f64>),
@@ -535,10 +494,10 @@ impl Default for Number {
     }
 }
 
-impl Into<Constant> for Number {
+impl From<Number> for Constant {
     #[inline]
-    fn into(self) -> Constant {
-        match self {
+    fn from(num: Number) -> Constant {
+        match num {
             Number::Fixnum(n) => Constant::Fixnum(n),
             Number::Integer(n) => Constant::Integer(n),
             Number::Float(f) => Constant::Float(f),
@@ -547,10 +506,10 @@ impl Into<Constant> for Number {
     }
 }
 
-impl Into<HeapCellValue> for Number {
+impl From<Number> for HeapCellValue {
     #[inline]
-    fn into(self) -> HeapCellValue {
-        match self {
+    fn from(num: Number) -> HeapCellValue {
+        match num {
             Number::Fixnum(n) => HeapCellValue::Addr(Addr::Fixnum(n)),
             Number::Integer(n) => HeapCellValue::Integer(n),
             Number::Float(f) => HeapCellValue::Addr(Addr::Float(f)),
@@ -559,50 +518,50 @@ impl Into<HeapCellValue> for Number {
     }
 }
 
-
 impl Number {
     #[inline]
     pub fn is_positive(&self) -> bool {
-        match self {
-            &Number::Fixnum(n) => n > 0,
-            &Number::Integer(ref n) => &**n > &0,
-            &Number::Float(OrderedFloat(f)) => f.is_sign_positive(),
-            &Number::Rational(ref r) => &**r > &0,
+        match *self {
+            Self::Fixnum(n) => n > 0,
+            Self::Integer(ref n) => **n > 0,
+            Self::Float(OrderedFloat(f)) => f.is_sign_positive(),
+            Self::Rational(ref r) => **r > 0,
         }
     }
 
     #[inline]
     pub fn is_negative(&self) -> bool {
-        match self {
-            &Number::Fixnum(n) => n < 0,
-            &Number::Integer(ref n) => &**n < &0,
-            &Number::Float(OrderedFloat(f)) => f.is_sign_negative(),
-            &Number::Rational(ref r) => &**r < &0,
+        match *self {
+            Self::Fixnum(n) => n < 0,
+            Self::Integer(ref n) => **n < 0,
+            Self::Float(OrderedFloat(f)) => f.is_sign_negative(),
+            Self::Rational(ref r) => **r < 0,
         }
     }
 
     #[inline]
     pub fn is_zero(&self) -> bool {
-        match self {
-            &Number::Fixnum(n) => n == 0,
-            &Number::Integer(ref n) => &**n == &0,
-            &Number::Float(f) => f == OrderedFloat(0f64),
-            &Number::Rational(ref r) => &**r == &0,
+        match *self {
+            Self::Fixnum(n) => n == 0,
+            Self::Integer(ref n) => **n == 0,
+            Self::Float(f) => f == OrderedFloat(0f64),
+            Self::Rational(ref r) => **r == 0,
         }
     }
 
     #[inline]
     pub fn abs(self) -> Self {
         match self {
-            Number::Fixnum(n) =>
+            Self::Fixnum(n) => {
                 if let Some(n) = n.checked_abs() {
-                    Number::from(n)
+                    Self::from(n)
                 } else {
-                    Number::from(Integer::from(n).abs())
+                    Self::from(Integer::from(n).abs())
                 }
-            Number::Integer(n) => Number::from(Integer::from(n.abs_ref())),
-            Number::Float(f) => Number::Float(OrderedFloat(f.abs())),
-            Number::Rational(r) => Number::from(Rational::from(r.abs_ref())),
+            }
+            Self::Integer(n) => Self::from(Integer::from(n.abs_ref())),
+            Self::Float(f) => Self::Float(OrderedFloat(f.abs())),
+            Self::Rational(r) => Self::from(Rational::from(r.abs_ref())),
         }
     }
 }
@@ -624,15 +583,13 @@ impl OptArgIndexKey {
     #[inline]
     pub fn arg_num(&self) -> usize {
         match &self {
-            OptArgIndexKey::Constant(arg_num, ..) |
-            OptArgIndexKey::Structure(arg_num, ..) |
-            OptArgIndexKey::List(arg_num, _) => {
+            OptArgIndexKey::Constant(arg_num, ..)
+            | OptArgIndexKey::Structure(arg_num, ..)
+            | OptArgIndexKey::List(arg_num, _) => {
                 // these are always at least 1.
                 *arg_num
             }
-            OptArgIndexKey::None => {
-                0
-            }
+            OptArgIndexKey::None => 0,
         }
     }
 
@@ -644,27 +601,22 @@ impl OptArgIndexKey {
     #[inline]
     pub fn switch_on_term_loc(&self) -> Option<usize> {
         match &self {
-            OptArgIndexKey::Constant(_, loc, ..) |
-            OptArgIndexKey::Structure(_, loc, ..) |
-            OptArgIndexKey::List(_, loc) => {
-                Some(*loc)
-            }
-            OptArgIndexKey::None => {
-                None
-            }
+            OptArgIndexKey::Constant(_, loc, ..)
+            | OptArgIndexKey::Structure(_, loc, ..)
+            | OptArgIndexKey::List(_, loc) => Some(*loc),
+            OptArgIndexKey::None => None,
         }
     }
 
     #[inline]
     pub fn set_switch_on_term_loc(&mut self, value: usize) {
         match self {
-            OptArgIndexKey::Constant(_, ref mut loc, ..) |
-            OptArgIndexKey::Structure(_, ref mut loc, ..) |
-            OptArgIndexKey::List(_, ref mut loc) => {
+            OptArgIndexKey::Constant(_, ref mut loc, ..)
+            | OptArgIndexKey::Structure(_, ref mut loc, ..)
+            | OptArgIndexKey::List(_, ref mut loc) => {
                 *loc = value;
             }
-            OptArgIndexKey::None => {
-            }
+            OptArgIndexKey::None => {}
         }
     }
 }
@@ -673,13 +625,12 @@ impl AddAssign<usize> for OptArgIndexKey {
     #[inline]
     fn add_assign(&mut self, n: usize) {
         match self {
-            OptArgIndexKey::Constant(_, ref mut o, ..) |
-            OptArgIndexKey::List(_, ref mut o) |
-            OptArgIndexKey::Structure(_, ref mut o, ..) => {
+            OptArgIndexKey::Constant(_, ref mut o, ..)
+            | OptArgIndexKey::List(_, ref mut o)
+            | OptArgIndexKey::Structure(_, ref mut o, ..) => {
                 *o += n;
             }
-            OptArgIndexKey::None => {
-            }
+            OptArgIndexKey::None => {}
         }
     }
 }

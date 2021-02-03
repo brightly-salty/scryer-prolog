@@ -1,5 +1,5 @@
-use rug::{Integer, Rational};
 use ordered_float::*;
+use rug::{Integer, Rational};
 use tabled_rc::*;
 
 use put_back_n::*;
@@ -27,112 +27,115 @@ pub const MAX_ARITY: usize = 1023;
 pub const XFX: u32 = 0x0001;
 pub const XFY: u32 = 0x0002;
 pub const YFX: u32 = 0x0004;
-pub const XF: u32  = 0x0010;
-pub const YF: u32  = 0x0020;
-pub const FX: u32  = 0x0040;
-pub const FY: u32  = 0x0080;
+pub const XF: u32 = 0x0010;
+pub const YF: u32 = 0x0020;
+pub const FX: u32 = 0x0040;
+pub const FY: u32 = 0x0080;
 pub const DELIMITER: u32 = 0x0100;
-pub const TERM: u32  = 0x1000;
+pub const TERM: u32 = 0x1000;
 pub const LTERM: u32 = 0x3000;
 
 pub const NEGATIVE_SIGN: u32 = 0x0200;
 
 #[macro_export]
 macro_rules! clause_name {
-    ($name: expr, $tbl: expr) => (
+    ($name: expr, $tbl: expr) => {
         ClauseName::User(TabledRc::new($name, $tbl.clone()))
-    ) ;
-    ($name: expr) => (
+    };
+    ($name: expr) => {
         ClauseName::BuiltIn($name)
-    )
+    };
 }
 
 #[macro_export]
 macro_rules! atom {
-    ($e:expr, $tbl:expr) => (
+    ($e:expr, $tbl:expr) => {
         Constant::Atom(ClauseName::User(tabled_rc!($e, $tbl)), None)
-    );
-    ($e:expr) => (
+    };
+    ($e:expr) => {
         Constant::Atom(clause_name!($e), None)
-    )
+    };
 }
 
-#[macro_export]
-macro_rules! rc_atom {
-    ($e:expr) => (
-        Rc::new(String::from($e))
-    )
-}
-macro_rules! is_term {
-    ($x:expr) => ( ($x & TERM) != 0 )
+#[inline]
+pub fn rc_atom<I: Into<String>>(e: I) -> Rc<String> {
+    Rc::new(e.into())
 }
 
-macro_rules! is_lterm {
-    ($x:expr) => ( ($x & LTERM) != 0 )
+#[inline]
+pub fn is_term(x: u32) -> bool {
+    (x & TERM) != 0
 }
 
-macro_rules! is_op {
-    ($x:expr) => ( $x & (XF | YF | FX | FY | XFX | XFY | YFX) != 0 )
+#[inline]
+pub fn is_lterm(x: u32) -> bool {
+    (x & LTERM) != 0
 }
 
-macro_rules! is_negate {
-    ($x:expr) => ( ($x & NEGATIVE_SIGN) != 0 )
+#[inline]
+pub fn is_op(x: u32) -> bool {
+    x & (XF | YF | FX | FY | XFX | XFY | YFX) != 0
 }
 
-#[macro_export]
-macro_rules! is_prefix {
-    ($x:expr) => ( $x & (FX | FY) != 0 )
+#[inline]
+pub fn is_negate(x: u32) -> bool {
+    (x & NEGATIVE_SIGN) != 0
 }
 
-#[macro_export]
-macro_rules! is_postfix {
-    ($x:expr) => ( $x & (XF | YF) != 0 )
+#[inline]
+pub fn is_prefix(x: u32) -> bool {
+    (x & (FX | FY)) != 0
 }
 
-#[macro_export]
-macro_rules! is_infix {
-    ($x:expr) => ( ($x & (XFX | XFY | YFX)) != 0 )
+#[inline]
+pub fn is_postfix(x: u32) -> bool {
+    (x & (XF | YF)) != 0
 }
 
-#[macro_export]
-macro_rules! is_xfx {
-    ($x:expr) => ( ($x & XFX) != 0 )
+#[inline]
+pub fn is_infix(x: u32) -> bool {
+    (x & (XFX | XFY | YFX)) != 0
 }
 
-#[macro_export]
-macro_rules! is_xfy {
-    ($x:expr) => ( ($x & XFY) != 0 )
+#[inline]
+pub fn is_xfx(x: u32) -> bool {
+    (x & XFX) != 0
 }
 
-#[macro_export]
-macro_rules! is_yfx {
-    ($x:expr) => ( ($x & YFX) != 0 )
+#[inline]
+pub fn is_xfy(x: u32) -> bool {
+    (x & XFY) != 0
 }
 
-#[macro_export]
-macro_rules! is_yf {
-    ($x:expr) => ( ($x & YF) != 0 )
+#[inline]
+pub fn is_yfx(x: u32) -> bool {
+    (x & YFX) != 0
 }
 
-#[macro_export]
-macro_rules! is_xf {
-    ($x:expr) => ( ($x & XF) != 0 )
+#[inline]
+pub fn is_yf(x: u32) -> bool {
+    (x & YF) != 0
 }
 
-#[macro_export]
-macro_rules! is_fx {
-    ($x:expr) => ( ($x & FX) != 0 )
+#[inline]
+pub fn is_xf(x: u32) -> bool {
+    (x & XF) != 0
 }
 
-#[macro_export]
-macro_rules! is_fy {
-    ($x:expr) => ( ($x & FY) != 0 )
+#[inline]
+pub fn is_fx(x: u32) -> bool {
+    (x & FX) != 0
+}
+
+#[inline]
+pub fn is_fy(x: u32) -> bool {
+    (x & FY) != 0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RegType {
     Perm(usize),
-    Temp(usize)
+    Temp(usize),
 }
 
 impl Default for RegType {
@@ -144,23 +147,20 @@ impl Default for RegType {
 impl RegType {
     pub fn reg_num(self) -> usize {
         match self {
-            RegType::Perm(reg_num) | RegType::Temp(reg_num) => reg_num
+            RegType::Perm(reg_num) | RegType::Temp(reg_num) => reg_num,
         }
     }
 
     pub fn is_perm(self) -> bool {
-        match self {
-            RegType::Perm(_) => true,
-            _ => false
-        }
+        matches!(self, RegType::Perm(_))
     }
 }
 
 impl fmt::Display for RegType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &RegType::Perm(val) => write!(f, "Y{}", val),
-            &RegType::Temp(val) => write!(f, "X{}", val)
+        match *self {
+            RegType::Perm(val) => write!(f, "Y{}", val),
+            RegType::Temp(val) => write!(f, "X{}", val),
         }
     }
 }
@@ -168,26 +168,24 @@ impl fmt::Display for RegType {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum VarReg {
     ArgAndNorm(RegType, usize),
-    Norm(RegType)
+    Norm(RegType),
 }
 
 impl VarReg {
     pub fn norm(self) -> RegType {
         match self {
-            VarReg::ArgAndNorm(reg, _) | VarReg::Norm(reg) => reg
+            VarReg::ArgAndNorm(reg, _) | VarReg::Norm(reg) => reg,
         }
     }
 }
 
 impl fmt::Display for VarReg {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &VarReg::Norm(RegType::Perm(reg)) => write!(f, "Y{}", reg),
-            &VarReg::Norm(RegType::Temp(reg)) => write!(f, "X{}", reg),
-            &VarReg::ArgAndNorm(RegType::Perm(reg), arg) =>
-                write!(f, "Y{} A{}", reg, arg),
-            &VarReg::ArgAndNorm(RegType::Temp(reg), arg) =>
-                write!(f, "X{} A{}", reg, arg)
+        match *self {
+            VarReg::Norm(RegType::Perm(reg)) => write!(f, "Y{}", reg),
+            VarReg::Norm(RegType::Temp(reg)) => write!(f, "X{}", reg),
+            VarReg::ArgAndNorm(RegType::Perm(reg), arg) => write!(f, "Y{} A{}", reg, arg),
+            VarReg::ArgAndNorm(RegType::Temp(reg), arg) => write!(f, "X{} A{}", reg, arg),
         }
     }
 }
@@ -200,28 +198,30 @@ impl Default for VarReg {
 
 #[macro_export]
 macro_rules! temp_v {
-    ($x:expr) => (
+    ($x:expr) => {
         RegType::Temp($x)
-    )
+    };
 }
 
 #[macro_export]
 macro_rules! perm_v {
-    ($x:expr) => (
+    ($x:expr) => {
         RegType::Perm($x)
-    )
+    };
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum GenContext {
-    Head, Mid(usize), Last(usize) // Mid & Last: chunk_num
+    Head,
+    Mid(usize),
+    Last(usize), // Mid & Last: chunk_num
 }
 
 impl GenContext {
     pub fn chunk_num(self) -> usize {
         match self {
             GenContext::Head => 0,
-            GenContext::Mid(cn) | GenContext::Last(cn) => cn
+            GenContext::Mid(cn) | GenContext::Last(cn) => cn,
         }
     }
 }
@@ -247,43 +247,35 @@ pub type OpDir = HashMap<OpDirKey, OpDirValue>;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MachineFlags {
-    pub double_quotes: DoubleQuotes
+    pub double_quotes: DoubleQuotes,
 }
 
 impl Default for MachineFlags {
     fn default() -> Self {
-        MachineFlags { double_quotes: DoubleQuotes::default() }
+        MachineFlags {
+            double_quotes: DoubleQuotes::default(),
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum DoubleQuotes {
-    Atom, Chars, Codes
+    Atom,
+    Chars,
+    Codes,
 }
 
 impl DoubleQuotes {
     pub fn is_chars(self) -> bool {
-        if let DoubleQuotes::Chars = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, DoubleQuotes::Chars)
     }
 
     pub fn is_atom(self) -> bool {
-        if let DoubleQuotes::Atom = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, DoubleQuotes::Atom)
     }
 
     pub fn is_codes(self) -> bool {
-        if let DoubleQuotes::Codes = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, DoubleQuotes::Codes)
     }
 }
 
@@ -296,10 +288,10 @@ impl Default for DoubleQuotes {
 pub fn default_op_dir() -> OpDir {
     let mut op_dir = OpDir::new();
 
-    op_dir.insert((clause_name!(":-"), Fixity::In),  OpDirValue::new(XFX, 1200));
-    op_dir.insert((clause_name!(":-"), Fixity::Pre), OpDirValue::new(FX,  1200));
-    op_dir.insert((clause_name!("?-"), Fixity::Pre), OpDirValue::new(FX,  1200));
-    op_dir.insert((clause_name!(","), Fixity::In),   OpDirValue::new(XFY, 1000));
+    op_dir.insert((clause_name!(":-"), Fixity::In), OpDirValue::new(XFX, 1200));
+    op_dir.insert((clause_name!(":-"), Fixity::Pre), OpDirValue::new(FX, 1200));
+    op_dir.insert((clause_name!("?-"), Fixity::Pre), OpDirValue::new(FX, 1200));
+    op_dir.insert((clause_name!(","), Fixity::In), OpDirValue::new(XFY, 1000));
 
     op_dir
 }
@@ -307,7 +299,7 @@ pub fn default_op_dir() -> OpDir {
 #[derive(Debug, Clone)]
 pub enum ArithmeticError {
     NonEvaluableFunctor(Constant, usize),
-    UninstantiatedVar
+    UninstantiatedVar,
 }
 
 #[derive(Debug)]
@@ -321,47 +313,35 @@ pub enum ParserError {
     MissingQuote(usize, usize),
     NonPrologChar(usize, usize),
     ParseBigInt(usize, usize),
-    Utf8Error(usize, usize)
+    Utf8Error(usize, usize),
 }
 
 impl ParserError {
     pub fn line_and_col_num(&self) -> Option<(usize, usize)> {
         match self {
             &ParserError::BackQuotedString(line_num, col_num)
-          | &ParserError::UnexpectedChar(_, line_num, col_num)
-          | &ParserError::IncompleteReduction(line_num, col_num)
-          | &ParserError::MissingQuote(line_num, col_num)
-          | &ParserError::NonPrologChar(line_num, col_num)
-          | &ParserError::ParseBigInt(line_num, col_num)
-          | &ParserError::Utf8Error(line_num, col_num) =>
-                Some((line_num, col_num)),
-            _ =>
-                None
+            | &ParserError::UnexpectedChar(_, line_num, col_num)
+            | &ParserError::IncompleteReduction(line_num, col_num)
+            | &ParserError::MissingQuote(line_num, col_num)
+            | &ParserError::NonPrologChar(line_num, col_num)
+            | &ParserError::ParseBigInt(line_num, col_num)
+            | &ParserError::Utf8Error(line_num, col_num) => Some((line_num, col_num)),
+            _ => None,
         }
     }
 
     pub fn as_str(&self) -> &'static str {
-        match self {
-            &ParserError::BackQuotedString(..) =>
-                "back_quoted_string",
-            &ParserError::UnexpectedChar(..) =>
-                "unexpected_char",
-            &ParserError::UnexpectedEOF =>
-                "unexpected_end_of_file",
-            &ParserError::IncompleteReduction(..) =>
-                "incomplete_reduction",
-            &ParserError::InvalidSingleQuotedCharacter(..) =>
-                "invalid_single_quoted_character",
-            &ParserError::IO(_) =>
-                "input_output_error",
-            &ParserError::MissingQuote(..) =>
-                "missing_quote",
-            &ParserError::NonPrologChar(..) =>
-                "non_prolog_character",
-            &ParserError::ParseBigInt(..) =>
-                "cannot_parse_big_int",
-            &ParserError::Utf8Error(..) =>
-                "utf8_conversion_error",
+        match *self {
+            ParserError::BackQuotedString(..) => "back_quoted_string",
+            ParserError::UnexpectedChar(..) => "unexpected_char",
+            ParserError::UnexpectedEOF => "unexpected_end_of_file",
+            ParserError::IncompleteReduction(..) => "incomplete_reduction",
+            ParserError::InvalidSingleQuotedCharacter(..) => "invalid_single_quoted_character",
+            ParserError::IO(_) => "input_output_error",
+            ParserError::MissingQuote(..) => "missing_quote",
+            ParserError::NonPrologChar(..) => "non_prolog_character",
+            ParserError::ParseBigInt(..) => "cannot_parse_big_int",
+            ParserError::Utf8Error(..) => "utf8_conversion_error",
         }
     }
 }
@@ -382,42 +362,41 @@ impl From<&IOError> for ParserError {
     }
 }
 
-
 #[derive(Debug, Clone, Copy)]
 pub struct CompositeOpDir<'a, 'b> {
     pub primary_op_dir: Option<&'b OpDir>,
     pub secondary_op_dir: &'a OpDir,
 }
 
-impl<'a, 'b> CompositeOpDir<'a, 'b>
-{
+impl<'a, 'b> CompositeOpDir<'a, 'b> {
     #[inline]
     pub fn new(secondary_op_dir: &'a OpDir, primary_op_dir: Option<&'b OpDir>) -> Self {
-        CompositeOpDir { primary_op_dir, secondary_op_dir }
+        CompositeOpDir {
+            primary_op_dir,
+            secondary_op_dir,
+        }
     }
 
     #[inline]
-    pub(crate)
-    fn get(&self, name: ClauseName, fixity: Fixity) -> Option<&OpDirValue>
-    {
-        let entry =
-            if let Some(ref primary_op_dir) = &self.primary_op_dir {
-                primary_op_dir.get(&(name.clone(), fixity))
-            } else {
-                None
-            };
+    pub(crate) fn get(&self, name: ClauseName, fixity: Fixity) -> Option<&OpDirValue> {
+        let entry = if let Some(ref primary_op_dir) = &self.primary_op_dir {
+            primary_op_dir.get(&(name.clone(), fixity))
+        } else {
+            None
+        };
 
         entry.or_else(move || self.secondary_op_dir.get(&(name, fixity)))
     }
 }
 
-
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub enum Fixity {
-    In, Post, Pre
+    In,
+    Post,
+    Pre,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Eq, PartialOrd, Ord)]
 pub struct SharedOpDesc(Rc<Cell<(usize, Specifier)>>);
 
 impl SharedOpDesc {
@@ -480,7 +459,13 @@ impl Hash for SharedOpDesc {
     }
 }
 
-#[derive(Debug, Clone, Hash)]
+impl PartialEq for SharedOpDesc {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq(&other.0)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Constant {
     Atom(ClauseName, Option<SharedOpDesc>),
     Char(char),
@@ -495,29 +480,22 @@ pub enum Constant {
 
 impl fmt::Display for Constant {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &Constant::Atom(ref atom, _) =>
+        match *self {
+            Constant::Atom(ref atom, _) => {
                 if atom.as_str().chars().any(|c| "`.$'\" ".contains(c)) {
                     write!(f, "'{}'", atom.as_str())
                 } else {
                     write!(f, "{}", atom.as_str())
-                },
-            &Constant::Char(c) =>
-                write!(f, "'{}'", c as u32),
-            &Constant::EmptyList =>
-                write!(f, "[]"),
-            &Constant::Fixnum(n) =>
-                write!(f, "{}", n),
-            &Constant::Integer(ref n) =>
-                write!(f, "{}", n),
-            &Constant::Rational(ref n) =>
-                write!(f, "{}", n),
-            &Constant::Float(ref n) =>
-                write!(f, "{}", n),
-            &Constant::String(ref s) =>
-                write!(f, "\"{}\"", &s),
-            &Constant::Usize(integer) =>
-                write!(f, "u{}", integer),
+                }
+            }
+            Constant::Char(c) => write!(f, "'{}'", c as u32),
+            Constant::EmptyList => write!(f, "[]"),
+            Constant::Fixnum(n) => write!(f, "{}", n),
+            Constant::Integer(ref n) => write!(f, "{}", n),
+            Constant::Rational(ref n) => write!(f, "{}", n),
+            Constant::Float(ref n) => write!(f, "{}", n),
+            Constant::String(ref s) => write!(f, "\"{}\"", &s),
+            Constant::Usize(integer) => write!(f, "u{}", integer),
         }
     }
 }
@@ -526,48 +504,55 @@ impl PartialEq for Constant {
     fn eq(&self, other: &Constant) -> bool {
         match (self, other) {
             (&Constant::Atom(ref atom, _), &Constant::Char(c))
-          | (&Constant::Char(c), &Constant::Atom(ref atom, _)) => {
-              atom.is_char() && Some(c) == atom.as_str().chars().next()
-            },
-            (&Constant::Atom(ref a1, _), &Constant::Atom(ref a2, _)) =>
-                a1.as_str() == a2.as_str(),
-            (&Constant::Char(c1), &Constant::Char(c2)) =>
-                c1 == c2,
-            (&Constant::Fixnum(n1), &Constant::Fixnum(n2)) =>
-                n1 == n2,
-            (&Constant::Fixnum(n1), &Constant::Integer(ref n2)) |
-            (&Constant::Integer(ref n2), &Constant::Fixnum(n1)) => {
+            | (&Constant::Char(c), &Constant::Atom(ref atom, _)) => {
+                atom.is_char() && atom.as_str().starts_with(c)
+            }
+            (&Constant::Atom(ref a1, _), &Constant::Atom(ref a2, _)) => a1.as_str() == a2.as_str(),
+            (&Constant::Char(c1), &Constant::Char(c2)) => c1 == c2,
+            (&Constant::Fixnum(n1), &Constant::Fixnum(n2)) => n1 == n2,
+            (&Constant::Fixnum(n1), &Constant::Integer(ref n2))
+            | (&Constant::Integer(ref n2), &Constant::Fixnum(n1)) => {
                 if let Some(n2) = n2.to_isize() {
                     n1 == n2
                 } else {
                     false
                 }
             }
-            (&Constant::Integer(ref n1), &Constant::Integer(ref n2)) =>
-                n1 == n2,
-            (&Constant::Rational(ref n1), &Constant::Rational(ref n2)) =>
-                n1 == n2,
-            (&Constant::Float(ref n1), &Constant::Float(ref n2)) =>
-                n1 == n2,
-            (&Constant::String(ref s1), &Constant::String(ref s2)) => {
-                &s1 == &s2
-            }
-            (&Constant::EmptyList, &Constant::EmptyList) =>
-                true,
-            (&Constant::Usize(u1), &Constant::Usize(u2)) =>
-                u1 == u2,
-            _ => false
+            (&Constant::Integer(ref n1), &Constant::Integer(ref n2)) => n1 == n2,
+            (&Constant::Rational(ref n1), &Constant::Rational(ref n2)) => n1 == n2,
+            (&Constant::Float(ref n1), &Constant::Float(ref n2)) => n1 == n2,
+            (&Constant::String(ref s1), &Constant::String(ref s2)) => s1 == s2,
+            (&Constant::EmptyList, &Constant::EmptyList) => true,
+            (&Constant::Usize(u1), &Constant::Usize(u2)) => u1 == u2,
+            _ => false,
         }
     }
 }
 
 impl Eq for Constant {}
 
-impl Constant {
-    pub fn to_atom(self) -> Option<ClauseName> {
+impl Hash for Constant {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            Constant::Atom(a, _) => Some(a.defrock_brackets()),
-            _ => None
+            Self::Atom(atom, _) => atom.hash(state),
+            Self::Char(c) => c.hash(state),
+            Self::Fixnum(n) => n.hash(state),
+            Self::Integer(n) => n.hash(state),
+            Self::EmptyList => {}
+            Self::Rational(n) => n.hash(state),
+            Self::Float(n) => n.hash(state),
+            Self::String(s) => s.hash(state),
+            Self::Usize(n) => n.hash(state),
+        }
+    }
+}
+
+impl Constant {
+    pub fn into_atom(self) -> Option<ClauseName> {
+        if let Constant::Atom(a, _) = self {
+            Some(a.defrock_brackets())
+        } else {
+            None
         }
     }
 }
@@ -575,7 +560,7 @@ impl Constant {
 #[derive(Debug, Clone)]
 pub enum ClauseName {
     BuiltIn(&'static str),
-    User(TabledRc<Atom>)
+    User(TabledRc<Atom>),
 }
 
 impl fmt::Display for ClauseName {
@@ -619,21 +604,22 @@ impl<'a> From<&'a TabledRc<Atom>> for ClauseName {
 impl ClauseName {
     #[inline]
     pub fn owning_module(&self) -> Self {
-        match self {
-            &ClauseName::User(ref name) => {
-                let module = name.owning_module();
-                ClauseName::User(TabledRc { atom: module.clone(),
-                                            table: TabledData::new(module) })
-            },
-            _ => clause_name!("user")
+        if let ClauseName::User(ref name) = *self {
+            let module = name.owning_module();
+            ClauseName::User(TabledRc {
+                atom: module.clone(),
+                table: TabledData::new(module),
+            })
+        } else {
+            clause_name!("user")
         }
     }
 
     #[inline]
     pub fn to_rc(&self) -> Rc<String> {
-        match self {
-            &ClauseName::BuiltIn(s) => Rc::new(s.to_string()),
-            &ClauseName::User(ref rc) => rc.inner()
+        match *self {
+            ClauseName::BuiltIn(s) => Rc::new(s.to_string()),
+            ClauseName::User(ref rc) => rc.inner(),
         }
     }
 
@@ -660,52 +646,46 @@ impl ClauseName {
     pub fn has_table_of(&self, other: &ClauseName) -> bool {
         match self {
             ClauseName::BuiltIn(_) => {
-                if let ClauseName::BuiltIn(_) = other {
-                    true
-                } else {
-                    false
-                }
+                matches!(other, ClauseName::BuiltIn(_))
             }
-            ClauseName::User(ref name) => {
-                other.has_table(&name.table)
-            }
+            ClauseName::User(ref name) => other.has_table(&name.table),
         }
     }
 
     #[inline]
     pub fn as_str(&self) -> &str {
-        match self {
-            &ClauseName::BuiltIn(s) => s,
-            &ClauseName::User(ref name) => name.as_ref()
+        match *self {
+            ClauseName::BuiltIn(s) => s,
+            ClauseName::User(ref name) => name.as_ref(),
         }
     }
 
     #[inline]
     pub fn is_char(&self) -> bool {
-        !self.as_str().is_empty() && self.as_str().chars().skip(1).next().is_none()
+        !self.as_str().is_empty() && self.as_str().chars().nth(1).is_none()
     }
 
     pub fn defrock_brackets(self) -> Self {
         fn defrock_brackets(s: &str) -> &str {
             if s.starts_with('(') && s.ends_with(')') {
-                &s[1 .. s.len() - 1]
+                &s[1..s.len() - 1]
             } else {
                 s
             }
         }
 
         match self {
-            ClauseName::BuiltIn(s) =>
-                ClauseName::BuiltIn(defrock_brackets(s)),
-            ClauseName::User(s) =>
+            ClauseName::BuiltIn(s) => ClauseName::BuiltIn(defrock_brackets(s)),
+            ClauseName::User(s) => {
                 ClauseName::User(tabled_rc!(defrock_brackets(s.as_str()).to_owned(), s.table))
+            }
         }
     }
 }
 
 impl AsRef<str> for ClauseName {
     #[inline]
-    fn as_ref(self: &Self) -> &str {
+    fn as_ref(&self) -> &str {
         self.as_str()
     }
 }
@@ -713,41 +693,42 @@ impl AsRef<str> for ClauseName {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Term {
     AnonVar,
-    Clause(Cell<RegType>, ClauseName, Vec<Box<Term>>, Option<SharedOpDesc>),
+    Clause(Cell<RegType>, ClauseName, Vec<Term>, Option<SharedOpDesc>),
     Cons(Cell<RegType>, Box<Term>, Box<Term>),
     Constant(Cell<RegType>, Constant),
-    Var(Cell<VarReg>, Rc<Var>)
+    Var(Cell<VarReg>, Rc<Var>),
 }
 
 impl Term {
     pub fn shared_op_desc(&self) -> Option<SharedOpDesc> {
-        match self {
-            &Term::Clause(_, _, _, ref spec) => spec.clone(),
-            &Term::Constant(_, Constant::Atom(_, ref spec)) => spec.clone(),
-            _ => None
+        match *self {
+            Term::Clause(_, _, _, ref spec) => spec.clone(),
+            Term::Constant(_, Constant::Atom(_, ref spec)) => spec.clone(),
+            _ => None,
         }
     }
 
-    pub fn to_constant(self) -> Option<Constant> {
-        match self {
-            Term::Constant(_, c) => Some(c),
-            _ => None
+    pub fn into_constant(self) -> Option<Constant> {
+        if let Term::Constant(_, c) = self {
+            Some(c)
+        } else {
+            None
         }
     }
 
     pub fn first_arg(&self) -> Option<&Term> {
-        match self {
-            &Term::Clause(_, _, ref terms, _) =>
-                terms.first().map(|bt| bt.as_ref()),
-            _ => None
+        if let Term::Clause(_, _, ref terms, _) = self {
+            terms.first()
+        } else {
+            None
         }
     }
 
     pub fn set_name(&mut self, new_name: ClauseName) {
         match self {
             Term::Constant(_, Constant::Atom(ref mut atom, _))
-          | Term::Clause(_, ref mut atom, ..) => {
-              *atom = new_name;
+            | Term::Clause(_, ref mut atom, ..) => {
+                *atom = new_name;
             }
             _ => {}
         }
@@ -755,25 +736,27 @@ impl Term {
 
     pub fn name(&self) -> Option<ClauseName> {
         match self {
-            &Term::Constant(_, Constant::Atom(ref atom, _))
-          | &Term::Clause(_, ref atom, ..) => Some(atom.clone()),
-            _ => None
+            &Term::Constant(_, Constant::Atom(ref atom, _)) | &Term::Clause(_, ref atom, ..) => {
+                Some(atom.clone())
+            }
+            _ => None,
         }
     }
 
     pub fn arity(&self) -> usize {
-        match self {
-            &Term::Clause(_, _, ref child_terms, ..) => child_terms.len(),
-            _ => 0
+        if let Term::Clause(_, _, ref child_terms, ..) = self {
+            child_terms.len()
+        } else {
+            0
         }
     }
 }
 
 fn unfold_by_str_once(term: &mut Term, s: &str) -> Option<(Term, Term)> {
-    if let &mut Term::Clause(_, ref name, ref mut subterms, _) = term {
+    if let Term::Clause(_, ref name, ref mut subterms, _) = *term {
         if name.as_str() == s && subterms.len() == 2 {
-            let snd = *subterms.pop().unwrap();
-            let fst = *subterms.pop().unwrap();
+            let snd = subterms.pop().unwrap();
+            let fst = subterms.pop().unwrap();
 
             return Some((fst, snd));
         }

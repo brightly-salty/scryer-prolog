@@ -42,16 +42,17 @@ impl<T: RawBlockTraits> Drop for HeapTemplate<T> {
 }
 
 #[derive(Debug)]
-pub(crate)
-struct HeapIntoIter<T: RawBlockTraits> {
+pub(crate) struct HeapIntoIter<T: RawBlockTraits> {
     offset: usize,
     buf: RawBlock<T>,
 }
 
 impl<T: RawBlockTraits> Drop for HeapIntoIter<T> {
     fn drop(&mut self) {
-        let mut heap =
-            HeapTemplate { buf: self.buf.take(), _marker: PhantomData };
+        let mut heap = HeapTemplate {
+            buf: self.buf.take(),
+            _marker: PhantomData,
+        };
 
         heap.truncate(self.offset / mem::size_of::<HeapCellValue>());
         heap.buf.deallocate();
@@ -66,9 +67,7 @@ impl<T: RawBlockTraits> Iterator for HeapIntoIter<T> {
         self.offset += mem::size_of::<HeapCellValue>();
 
         if ptr < self.buf.top as usize {
-            unsafe {
-                Some(ptr::read(ptr as *const HeapCellValue))
-            }
+            unsafe { Some(ptr::read(ptr as *const HeapCellValue)) }
         } else {
             None
         }
@@ -76,15 +75,13 @@ impl<T: RawBlockTraits> Iterator for HeapIntoIter<T> {
 }
 
 #[derive(Debug)]
-pub(crate)
-struct HeapIter<'a, T: RawBlockTraits> {
+pub(crate) struct HeapIter<'a, T: RawBlockTraits> {
     offset: usize,
     buf: &'a RawBlock<T>,
 }
 
 impl<'a, T: RawBlockTraits> HeapIter<'a, T> {
-    pub(crate)
-    fn new(buf: &'a RawBlock<T>, offset: usize) -> Self {
+    pub(crate) fn new(buf: &'a RawBlock<T>, offset: usize) -> Self {
         HeapIter { buf, offset }
     }
 }
@@ -97,9 +94,7 @@ impl<'a, T: RawBlockTraits> Iterator for HeapIter<'a, T> {
         self.offset += mem::size_of::<HeapCellValue>();
 
         if ptr < self.buf.top as usize {
-            unsafe {
-                Some(&*(ptr as *const _))
-            }
+            unsafe { Some(&*(ptr as *const _)) }
         } else {
             None
         }
@@ -107,23 +102,20 @@ impl<'a, T: RawBlockTraits> Iterator for HeapIter<'a, T> {
 }
 
 #[allow(dead_code)]
-pub(crate)
-fn print_heap_terms<'a, I: Iterator<Item = &'a HeapCellValue>>(heap: I, h: usize) {
+pub(crate) fn print_heap_terms<'a, I: Iterator<Item = &'a HeapCellValue>>(heap: I, h: usize) {
     for (index, term) in heap.enumerate() {
         println!("{} : {}", h + index, term);
     }
 }
 
 #[derive(Debug)]
-pub(crate)
-struct HeapIterMut<'a, T: RawBlockTraits> {
+pub(crate) struct HeapIterMut<'a, T: RawBlockTraits> {
     offset: usize,
     buf: &'a mut RawBlock<T>,
 }
 
 impl<'a, T: RawBlockTraits> HeapIterMut<'a, T> {
-    pub(crate)
-    fn new(buf: &'a mut RawBlock<T>, offset: usize) -> Self {
+    pub(crate) fn new(buf: &'a mut RawBlock<T>, offset: usize) -> Self {
         HeapIterMut { buf, offset }
     }
 }
@@ -136,9 +128,7 @@ impl<'a, T: RawBlockTraits> Iterator for HeapIterMut<'a, T> {
         self.offset += mem::size_of::<HeapCellValue>();
 
         if ptr < self.buf.top as usize {
-            unsafe {
-                Some(&mut *(ptr as *mut _))
-            }
+            unsafe { Some(&mut *(ptr as *mut _)) }
         } else {
             None
         }
@@ -147,51 +137,33 @@ impl<'a, T: RawBlockTraits> Iterator for HeapIterMut<'a, T> {
 
 impl<T: RawBlockTraits> HeapTemplate<T> {
     #[inline]
-    pub(crate)
-    fn new() -> Self {
-        HeapTemplate { buf: RawBlock::new(), _marker: PhantomData }
-    }
-
-    #[inline]
-    pub(crate)
-    fn clone(&self, h: usize) -> HeapCellValue {
-        match &self[h] {
-            &HeapCellValue::Addr(addr) => {
-                HeapCellValue::Addr(addr)
-            }
-            &HeapCellValue::Atom(ref name, ref op) => {
-                HeapCellValue::Atom(name.clone(), op.clone())
-            }
-            &HeapCellValue::DBRef(ref db_ref) => {
-                HeapCellValue::DBRef(db_ref.clone())
-            }
-            &HeapCellValue::Integer(ref n) => {
-                HeapCellValue::Integer(n.clone())
-            }
-            &HeapCellValue::LoadStatePayload(_) => {
-                HeapCellValue::Addr(Addr::LoadStatePayload(h))
-            }
-            &HeapCellValue::NamedStr(arity, ref name, ref op) => {
-                HeapCellValue::NamedStr(arity, name.clone(), op.clone())
-            }
-            &HeapCellValue::PartialString(..) => {
-                HeapCellValue::Addr(Addr::PStrLocation(h, 0))
-            }
-            &HeapCellValue::Rational(ref r) => {
-                HeapCellValue::Rational(r.clone())
-            }
-            &HeapCellValue::Stream(_) => {
-                HeapCellValue::Addr(Addr::Stream(h))
-            }
-            &HeapCellValue::TcpListener(_) => {
-                HeapCellValue::Addr(Addr::TcpListener(h))
-            }
+    pub(crate) fn new() -> Self {
+        HeapTemplate {
+            buf: RawBlock::new(),
+            _marker: PhantomData,
         }
     }
 
     #[inline]
-    pub(crate)
-    fn put_complete_string(&mut self, s: &str) -> Addr {
+    pub(crate) fn clone(&self, h: usize) -> HeapCellValue {
+        match self[h] {
+            HeapCellValue::Addr(addr) => HeapCellValue::Addr(addr),
+            HeapCellValue::Atom(ref name, ref op) => HeapCellValue::Atom(name.clone(), op.clone()),
+            HeapCellValue::DBRef(ref db_ref) => HeapCellValue::DBRef(db_ref.clone()),
+            HeapCellValue::Integer(ref n) => HeapCellValue::Integer(n.clone()),
+            HeapCellValue::LoadStatePayload(_) => HeapCellValue::Addr(Addr::LoadStatePayload(h)),
+            HeapCellValue::NamedStr(arity, ref name, ref op) => {
+                HeapCellValue::NamedStr(arity, name.clone(), op.clone())
+            }
+            HeapCellValue::PartialString(..) => HeapCellValue::Addr(Addr::PStrLocation(h, 0)),
+            HeapCellValue::Rational(ref r) => HeapCellValue::Rational(r.clone()),
+            HeapCellValue::Stream(_) => HeapCellValue::Addr(Addr::Stream(h)),
+            HeapCellValue::TcpListener(_) => HeapCellValue::Addr(Addr::TcpListener(h)),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn put_complete_string(&mut self, s: &str) -> Addr {
         if s.is_empty() {
             return Addr::EmptyList;
         }
@@ -201,43 +173,25 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
 
         let h = self.h();
 
-        match &mut self[h - 1] {
-            &mut HeapCellValue::PartialString(_, ref mut has_tail) => {
-                *has_tail = false;
-            }
-            _ => {
-                unreachable!()
-            }
+        if let HeapCellValue::PartialString(_, ref mut has_tail) = self[h - 1] {
+            *has_tail = false;
+        } else {
+            unreachable!()
         }
 
         addr
     }
 
     #[inline]
-    pub(crate)
-    fn put_constant(&mut self, c: Constant) -> Addr {
+    pub(crate) fn put_constant(&mut self, c: Constant) -> Addr {
         match c {
-            Constant::Atom(name, op) => {
-                Addr::Con(self.push(HeapCellValue::Atom(name, op)))
-            }
-            Constant::Char(c) => {
-                Addr::Char(c)
-            }
-            Constant::EmptyList => {
-                Addr::EmptyList
-            }
-            Constant::Fixnum(n) => {
-                Addr::Fixnum(n)
-            }
-            Constant::Integer(n) => {
-                Addr::Con(self.push(HeapCellValue::Integer(n)))
-            }
-            Constant::Rational(r) => {
-                Addr::Con(self.push(HeapCellValue::Rational(r)))
-            }
-            Constant::Float(f) => {
-                Addr::Float(f)
-            }
+            Constant::Atom(name, op) => Addr::Con(self.push(HeapCellValue::Atom(name, op))),
+            Constant::Char(c) => Addr::Char(c),
+            Constant::EmptyList => Addr::EmptyList,
+            Constant::Fixnum(n) => Addr::Fixnum(n),
+            Constant::Integer(n) => Addr::Con(self.push(HeapCellValue::Integer(n))),
+            Constant::Rational(r) => Addr::Con(self.push(HeapCellValue::Rational(r))),
+            Constant::Float(f) => Addr::Float(f),
             Constant::String(s) => {
                 if s.is_empty() {
                     Addr::EmptyList
@@ -245,15 +199,12 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
                     self.put_complete_string(&s)
                 }
             }
-            Constant::Usize(n) => {
-                Addr::Usize(n)
-            }
+            Constant::Usize(n) => Addr::Usize(n),
         }
     }
 
     #[inline]
-    pub(crate)
-    fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         let h = self.h();
 
         if h > 0 {
@@ -262,8 +213,7 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
     }
 
     #[inline]
-    pub(crate)
-    fn push(&mut self, val: HeapCellValue) -> usize {
+    pub(crate) fn push(&mut self, val: HeapCellValue) -> usize {
         let h = self.h();
 
         unsafe {
@@ -276,34 +226,20 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
     }
 
     #[inline]
-    pub(crate)
-    fn atom_at(&self, h: usize) -> bool {
-        if let HeapCellValue::Atom(..) = &self[h] {
-            true
-        } else {
-            false
-        }
+    pub(crate) fn atom_at(&self, h: usize) -> bool {
+        matches!(&self[h], HeapCellValue::Atom(..))
     }
 
     #[inline]
-    pub(crate)
-    fn to_unifiable(&mut self, non_heap_value: HeapCellValue) -> Addr {
+    pub(crate) fn as_unifiable(&mut self, non_heap_value: HeapCellValue) -> Addr {
         match non_heap_value {
-            HeapCellValue::Addr(addr) => {
-                addr
-            }
-            val @ HeapCellValue::Atom(..) |
-            val @ HeapCellValue::Integer(_) |
-            val @ HeapCellValue::DBRef(_) |
-            val @ HeapCellValue::Rational(_) => {
-                Addr::Con(self.push(val))
-            }
-            val @ HeapCellValue::LoadStatePayload(_) => {
-                Addr::LoadStatePayload(self.push(val))
-            }
-            val @ HeapCellValue::NamedStr(..) => {
-                Addr::Str(self.push(val))
-            }
+            HeapCellValue::Addr(addr) => addr,
+            val @ HeapCellValue::Atom(..)
+            | val @ HeapCellValue::Integer(_)
+            | val @ HeapCellValue::DBRef(_)
+            | val @ HeapCellValue::Rational(_) => Addr::Con(self.push(val)),
+            val @ HeapCellValue::LoadStatePayload(_) => Addr::LoadStatePayload(self.push(val)),
+            val @ HeapCellValue::NamedStr(..) => Addr::Str(self.push(val)),
             HeapCellValue::PartialString(pstr, has_tail) => {
                 let h = self.push(HeapCellValue::PartialString(pstr, has_tail));
 
@@ -313,20 +249,14 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
 
                 Addr::Con(h)
             }
-            val @ HeapCellValue::Stream(..) => {
-                Addr::Stream(self.push(val))
-            }
-            val @ HeapCellValue::TcpListener(..) => {
-                Addr::TcpListener(self.push(val))
-            }
+            val @ HeapCellValue::Stream(..) => Addr::Stream(self.push(val)),
+            val @ HeapCellValue::TcpListener(..) => Addr::TcpListener(self.push(val)),
         }
     }
 
     #[inline]
-    pub(crate)
-    fn allocate_pstr(&mut self, src: &str) -> Addr {
-        self.write_pstr(src)
-            .unwrap_or_else(|| Addr::EmptyList)
+    pub(crate) fn allocate_pstr(&mut self, src: &str) -> Addr {
+        self.write_pstr(src).unwrap_or(Addr::EmptyList)
     }
 
     #[inline]
@@ -334,7 +264,7 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
         let orig_h = self.h();
 
         loop {
-            if src == "" {
+            if src.is_empty() {
                 return if orig_h == self.h() {
                     None
                 } else {
@@ -347,27 +277,11 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
 
             let h = self.h();
 
-            let (pstr, rest_src) =
-                match PartialString::new(src) {
-                    Some(tuple) => {
-                        tuple
-                    }
-                    None => {
-                        if src.len() > '\u{0}'.len_utf8() {
-                            src = &src['\u{0}'.len_utf8() ..];
-                            continue;
-                        } else if orig_h == h {
-                            return None;
-                        } else {
-                            self[h - 1] = HeapCellValue::Addr(Addr::HeapCell(h - 1));
-                            return Some(Addr::PStrLocation(orig_h, 0));
-                        }
-                    }
-                };
+            let (pstr, rest_src) = PartialString::new(src);
 
             self.push(HeapCellValue::PartialString(pstr, true));
 
-            if rest_src != "" {
+            if !rest_src.is_empty() {
                 self.push(HeapCellValue::Addr(Addr::PStrLocation(h + 2, 0)));
                 src = rest_src;
             } else {
@@ -378,8 +292,7 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
     }
 
     #[inline]
-    pub(crate)
-    fn truncate(&mut self, h: usize) {
+    pub(crate) fn truncate(&mut self, h: usize) {
         let new_top = h * mem::size_of::<HeapCellValue>() + self.buf.base as usize;
         let mut h = new_top;
 
@@ -395,30 +308,27 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
     }
 
     #[inline]
-    pub(crate)
-    fn h(&self) -> usize {
+    pub(crate) fn h(&self) -> usize {
         (self.buf.top as usize - self.buf.base as usize) / mem::size_of::<HeapCellValue>()
     }
 
-    pub(crate)
-    fn append(&mut self, vals: Vec<HeapCellValue>) {
+    pub(crate) fn append(&mut self, vals: Vec<HeapCellValue>) {
         for val in vals {
             self.push(val);
         }
     }
 
-    pub(crate)
-    fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         if !self.buf.base.is_null() {
             self.truncate(0);
             self.buf.top = self.buf.base;
         }
     }
 
-    pub(crate)
-    fn to_list<Iter, SrcT>(&mut self, values: Iter) -> usize
-        where Iter: Iterator<Item = SrcT>,
-              SrcT: Into<HeapCellValue>
+    pub(crate) fn as_list<Iter, SrcT>(&mut self, values: Iter) -> usize
+    where
+        Iter: Iterator<Item = SrcT>,
+        SrcT: Into<HeapCellValue>,
     {
         let head_addr = self.h();
         let mut h = head_addr;
@@ -436,66 +346,48 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
     }
 
     /* Create an iterator starting from the passed offset. */
-    pub(crate)
-    fn iter_from<'a>(&'a self, offset: usize) -> HeapIter<'a, T> {
+    pub(crate) fn iter_from(&self, offset: usize) -> HeapIter<T> {
         HeapIter::new(&self.buf, offset * mem::size_of::<HeapCellValue>())
     }
 
-    pub(crate)
-    fn iter_mut_from<'a>(&'a mut self, offset: usize) -> HeapIterMut<'a, T> {
+    pub(crate) fn iter_mut_from(&mut self, offset: usize) -> HeapIterMut<T> {
         HeapIterMut::new(&mut self.buf, offset * mem::size_of::<HeapCellValue>())
     }
 
-    pub(crate)
-    fn into_iter(mut self) -> HeapIntoIter<T> {
-        HeapIntoIter { buf: self.buf.take(), offset: 0 }
+    pub(crate) fn into_iter(mut self) -> HeapIntoIter<T> {
+        HeapIntoIter {
+            buf: self.buf.take(),
+            offset: 0,
+        }
     }
 
-    pub(crate)
-    fn extend<Iter: Iterator<Item = HeapCellValue>>(&mut self, iter: Iter) {
+    pub(crate) fn extend<Iter: Iterator<Item = HeapCellValue>>(&mut self, iter: Iter) {
         for hcv in iter {
             self.push(hcv);
         }
     }
 
-    pub(crate)
-    fn to_local_code_ptr(&self, addr: &Addr) -> Option<LocalCodePtr> {
+    pub(crate) fn to_local_code_ptr(&self, addr: &Addr) -> Option<LocalCodePtr> {
         let extract_integer = |s: usize| -> Option<usize> {
-            match &self[s] {
-                &HeapCellValue::Addr(Addr::Fixnum(n)) => usize::try_from(n).ok(),
-                &HeapCellValue::Integer(ref n) => n.to_usize(),
-                _ => None
+            match self[s] {
+                HeapCellValue::Addr(Addr::Fixnum(n)) => usize::try_from(n).ok(),
+                HeapCellValue::Integer(ref n) => n.to_usize(),
+                _ => None,
             }
         };
 
-        match addr {
-            Addr::Str(s) => {
-                match &self[*s] {
-                    HeapCellValue::NamedStr(arity, ref name, _) => {
-                        match (name.as_str(), *arity) {
-                            ("dir_entry", 1) => {
-                                extract_integer(s+1).map(LocalCodePtr::DirEntry)
-                            }
-                            /*
-                            ("top_level", 2) => {
-                                if let Some(chunk_num) = extract_integer(s+1) {
-                                    if let Some(p) = extract_integer(s+2) {
-                                        return Some(LocalCodePtr::TopLevel(chunk_num, p));
-                                    }
-                                }
-
-                                None
-                            }
-                            */
-                            _ => {
-                                None
-                            }
-                        }
-                    }
-                    _ => unreachable!()
+        if let Addr::Str(s) = addr {
+            if let HeapCellValue::NamedStr(arity, ref name, _) = &self[*s] {
+                if let ("dir_entry", 1) = (name.as_str(), *arity) {
+                    extract_integer(s + 1).map(LocalCodePtr::DirEntry)
+                } else {
+                    None
                 }
+            } else {
+                unreachable!()
             }
-            _ => None
+        } else {
+            None
         }
     }
 
@@ -505,9 +397,7 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
             &Addr::Con(h) | &Addr::Str(h) | &Addr::Stream(h) | &Addr::TcpListener(h) => {
                 RefOrOwned::Borrowed(&self[h])
             }
-            addr => {
-                RefOrOwned::Owned(HeapCellValue::Addr(*addr))
-            }
+            addr => RefOrOwned::Owned(HeapCellValue::Addr(*addr)),
         }
     }
 }

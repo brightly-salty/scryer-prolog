@@ -31,14 +31,14 @@ pub enum VarData {
 
 impl VarData {
     pub fn as_reg_type(&self) -> RegType {
-        match self {
-            &VarData::Temp(_, r, _) => RegType::Temp(r),
-            &VarData::Perm(r) => RegType::Perm(r),
+        match *self {
+            Self::Temp(_, r, _) => RegType::Temp(r),
+            Self::Perm(r) => RegType::Perm(r),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct TempVarData {
     pub last_term_arity: usize,
     pub use_set: OccurrenceSet,
@@ -49,21 +49,13 @@ pub struct TempVarData {
 impl TempVarData {
     pub fn new(last_term_arity: usize) -> Self {
         TempVarData {
-            last_term_arity: last_term_arity,
-            use_set: BTreeSet::new(),
-            no_use_set: BTreeSet::new(),
-            conflict_set: BTreeSet::new(),
+            last_term_arity,
+            ..Default::default()
         }
     }
 
     pub fn uses_reg(&self, reg: usize) -> bool {
-        for &(_, nreg) in self.use_set.iter() {
-            if reg == nreg {
-                return true;
-            }
-        }
-
-        return false;
+        self.use_set.iter().any(|(_, nreg)| nreg == &reg)
     }
 
     pub fn populate_conflict_set(&mut self) {
@@ -83,18 +75,17 @@ impl TempVarData {
 type VariableFixture<'a> = (VarStatus, Vec<&'a Cell<VarReg>>);
 
 #[derive(Debug)]
-pub struct VariableFixtures<'a>{
+pub struct VariableFixtures<'a> {
     perm_vars: IndexMap<Rc<Var>, VariableFixture<'a>>,
-    last_chunk_temp_vars: IndexSet<Rc<Var>>
+    last_chunk_temp_vars: IndexSet<Rc<Var>>,
 }
 
 impl<'a> VariableFixtures<'a> {
     pub fn new() -> Self {
         VariableFixtures {
             perm_vars: IndexMap::new(),
-            last_chunk_temp_vars: IndexSet::new()
+            last_chunk_temp_vars: IndexSet::new(),
         }
-
     }
 
     pub fn insert(&mut self, var: Rc<Var>, vs: VariableFixture<'a>) {
@@ -119,7 +110,7 @@ impl<'a> VariableFixtures<'a> {
         let mut use_sets: IndexMap<Rc<Var>, OccurrenceSet> = IndexMap::new();
 
         for (var, &mut (ref mut var_status, _)) in self.iter_mut() {
-            if let &mut VarStatus::Temp(_, ref mut var_data) = var_status {
+            if let VarStatus::Temp(_, ref mut var_data) = *var_status {
                 let mut use_set = OccurrenceSet::new();
 
                 swap(&mut var_data.use_set, &mut use_set);
@@ -132,11 +123,9 @@ impl<'a> VariableFixtures<'a> {
             for &(term_loc, reg) in use_set.iter() {
                 if let GenContext::Last(cn_u) = term_loc {
                     for (ref t, &mut (ref mut var_status, _)) in self.iter_mut() {
-                        if let &mut VarStatus::Temp(cn_t, ref mut t_data) = var_status {
-                            if cn_u == cn_t && *u != ***t {
-                                if !t_data.uses_reg(reg) {
-                                    t_data.no_use_set.insert(reg);
-                                }
+                        if let VarStatus::Temp(cn_t, ref mut t_data) = *var_status {
+                            if cn_u == cn_t && *u != ***t && !t_data.uses_reg(reg) {
+                                t_data.no_use_set.insert(reg);
                             }
                         }
                     }
@@ -144,12 +133,9 @@ impl<'a> VariableFixtures<'a> {
             }
 
             // 3.
-            match self.get_mut(u).unwrap() {
-                &mut (VarStatus::Temp(_, ref mut u_data), _) => {
-                    u_data.use_set = use_set;
-                    u_data.populate_conflict_set();
-                }
-                _ => {}
+            if let (VarStatus::Temp(_, ref mut u_data), _) = *self.get_mut(u).unwrap() {
+                u_data.use_set = use_set;
+                u_data.populate_conflict_set();
             };
         }
     }
@@ -175,7 +161,7 @@ impl<'a> VariableFixtures<'a> {
         let mut var_count = 0;
 
         for &(ref var_status, _) in self.values() {
-            if let &VarStatus::Perm(i) = var_status {
+            if let VarStatus::Perm(i) = *var_status {
                 if i > index {
                     var_count += 1;
                 }
@@ -193,7 +179,7 @@ impl<'a> VariableFixtures<'a> {
         let mut arg_c = 1;
 
         for term_ref in iter {
-            if let &TermRef::Var(lvl, cell, ref var) = &term_ref {
+            if let TermRef::Var(lvl, cell, ref var) = term_ref {
                 let mut status = self.perm_vars.swap_remove(var).unwrap_or((
                     VarStatus::Temp(chunk_num, TempVarData::new(lt_arity)),
                     Vec::new(),
@@ -234,9 +220,12 @@ impl<'a> VariableFixtures<'a> {
     pub fn set_perm_vals(&self, has_deep_cuts: bool) {
         let mut values_vec: Vec<_> = self
             .values()
-            .filter_map(|ref v| match &v.0 {
-                &VarStatus::Perm(i) => Some((i, &v.1)),
-                _ => None,
+            .filter_map(|ref v| {
+                if let VarStatus::Perm(i) = v.0 {
+                    Some((i, &v.1))
+                } else {
+                    None
+                }
             })
             .collect();
 
@@ -262,44 +251,40 @@ impl UnsafeVarMarker {
     pub fn new() -> Self {
         UnsafeVarMarker {
             unsafe_vars: IndexMap::new(),
-            safe_vars: IndexSet::new()
+            safe_vars: IndexSet::new(),
         }
     }
 
     pub fn from_safe_vars(safe_vars: IndexSet<RegType>) -> Self {
         UnsafeVarMarker {
             unsafe_vars: IndexMap::new(),
-            safe_vars
+            safe_vars,
         }
     }
 
     pub fn mark_safe_vars(&mut self, query_instr: &QueryInstruction) -> bool {
         match query_instr {
             &QueryInstruction::PutVariable(r @ RegType::Temp(_), _)
-          | &QueryInstruction::SetVariable(r) =>  {
+            | &QueryInstruction::SetVariable(r) => {
                 self.safe_vars.insert(r);
                 true
             }
-            _ => {
-                false
-            }
+            _ => false,
         }
     }
 
     pub fn mark_phase(&mut self, query_instr: &QueryInstruction, phase: usize) {
-        match query_instr {
-            &QueryInstruction::PutValue(r @ RegType::Perm(_), _)
-          | &QueryInstruction::SetValue(r) => {
-                let p = self.unsafe_vars.entry(r).or_insert(0);
-                *p = phase;
-            }
-            _ => {}
+        if let QueryInstruction::PutValue(r @ RegType::Perm(_), _) | QueryInstruction::SetValue(r) =
+            *query_instr
+        {
+            let p = self.unsafe_vars.entry(r).or_insert(0);
+            *p = phase;
         }
     }
 
     pub fn mark_unsafe_vars(&mut self, query_instr: &mut QueryInstruction, phase: usize) {
-        match query_instr {
-            &mut QueryInstruction::PutValue(RegType::Perm(i), arg) => {
+        match *query_instr {
+            QueryInstruction::PutValue(RegType::Perm(i), arg) => {
                 if let Some(p) = self.unsafe_vars.swap_remove(&RegType::Perm(i)) {
                     if p == phase {
                         *query_instr = QueryInstruction::PutUnsafeValue(i, arg);
@@ -309,7 +294,7 @@ impl UnsafeVarMarker {
                     }
                 }
             }
-            &mut QueryInstruction::SetValue(r) => {
+            QueryInstruction::SetValue(r) => {
                 if !self.safe_vars.contains(&r) {
                     *query_instr = QueryInstruction::SetLocalValue(r);
 

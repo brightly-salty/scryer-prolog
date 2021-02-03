@@ -34,8 +34,8 @@ mod machine_state_impl;
 mod system_calls;
 
 //use crate::machine::attributed_variables::*;
-use crate::machine::compile::*;
 use crate::machine::code_repo::*;
+use crate::machine::compile::*;
 // use crate::machine::loader::*;
 use crate::machine::machine_errors::*;
 use crate::machine::machine_indices::*;
@@ -119,65 +119,65 @@ include!(concat!(env!("OUT_DIR"), "/libraries.rs"));
 
 impl Machine {
     /*
-    fn compile_special_forms(&mut self)
-    {
-        let verify_attrs_src = ListingSource::User;
-
-        match compile_special_form(
-            self,
-            Stream::from(VERIFY_ATTRS),
-            verify_attrs_src,
-        )
+        fn compile_special_forms(&mut self)
         {
-            Ok(p) => {
-                self.machine_st.attr_var_init.verify_attrs_loc = p;
+            let verify_attrs_src = ListingSource::User;
+
+            match compile_special_form(
+                self,
+                Stream::from(VERIFY_ATTRS),
+                verify_attrs_src,
+            )
+            {
+                Ok(p) => {
+                    self.machine_st.attr_var_init.verify_attrs_loc = p;
+                }
+                Err(_) =>
+                    panic!("Machine::compile_special_forms() failed at VERIFY_ATTRS"),
             }
-            Err(_) =>
-                panic!("Machine::compile_special_forms() failed at VERIFY_ATTRS"),
+
+            let project_attrs_src = ListingSource::User;
+
+            match compile_special_form(
+                self,
+                Stream::from(PROJECT_ATTRS),
+                project_attrs_src,
+            )
+            {
+                Ok(p) => {
+                    self.machine_st.attr_var_init.project_attrs_loc = p;
+                }
+                Err(e) =>
+                    panic!("Machine::compile_special_forms() failed at PROJECT_ATTRS: {}", e),
+            }
         }
 
-        let project_attrs_src = ListingSource::User;
-
-        match compile_special_form(
-            self,
-            Stream::from(PROJECT_ATTRS),
-            project_attrs_src,
-        )
-        {
-            Ok(p) => {
-                self.machine_st.attr_var_init.project_attrs_loc = p;
-            }
-            Err(e) =>
-                panic!("Machine::compile_special_forms() failed at PROJECT_ATTRS: {}", e),
-        }
-    }
-
-    fn compile_scryerrc(&mut self) {
-        let mut path = match dirs_next::home_dir() {
-            Some(path) => path,
-            None => return,
-        };
-
-        path.push(".scryerrc");
-
-        if path.is_file() {
-            let file_src = match File::open(&path) {
-                Ok(file_handle) => Stream::from_file_as_input(
-                    clause_name!(".scryerrc"),
-                    file_handle,
-                ),
-                Err(_) => return,
+        fn compile_scryerrc(&mut self) {
+            let mut path = match dirs_next::home_dir() {
+                Some(path) => path,
+                None => return,
             };
 
-            let rc_src = ListingSource::from_file_and_path(
-                clause_name!(".scryerrc"),
-                path.to_path_buf(),
-            );
+            path.push(".scryerrc");
 
-            compile_user_module(self, file_src, rc_src);
+            if path.is_file() {
+                let file_src = match File::open(&path) {
+                    Ok(file_handle) => Stream::from_file_as_input(
+                        clause_name!(".scryerrc"),
+                        file_handle,
+                    ),
+                    Err(_) => return,
+                };
+
+                let rc_src = ListingSource::from_file_and_path(
+                    clause_name!(".scryerrc"),
+                    path.to_path_buf(),
+                );
+
+                compile_user_module(self, file_src, rc_src);
+            }
         }
-    }
-*/
+    */
     #[cfg(test)]
     pub fn reset(&mut self) {
         self.current_input_stream = readline::input_stream();
@@ -201,18 +201,13 @@ impl Machine {
     }
 
     fn load_file(&mut self, path: String, stream: Stream) {
-        self.machine_st[temp_v!(1)] = Addr::Stream(
-            self.machine_st.heap.push(HeapCellValue::Stream(
-                stream,
-            ))
-        );
+        self.machine_st[temp_v!(1)] =
+            Addr::Stream(self.machine_st.heap.push(HeapCellValue::Stream(stream)));
 
-        self.machine_st[temp_v!(2)] = Addr::Con(
-            self.machine_st.heap.push(HeapCellValue::Atom(
-                clause_name!(path, self.machine_st.atom_tbl),
-                None,
-            ))
-        );
+        self.machine_st[temp_v!(2)] = Addr::Con(self.machine_st.heap.push(HeapCellValue::Atom(
+            clause_name!(path, self.machine_st.atom_tbl),
+            None,
+        )));
 
         self.run_module_predicate(clause_name!("loader"), (clause_name!("file_load"), 2));
     }
@@ -245,11 +240,9 @@ impl Machine {
         bootstrapping_compile(
             Stream::from(include_str!("attributed_variables.pl")),
             self,
-            ListingSource::from_file_and_path(
-                clause_name!("attributed_variables"),
-                path_buf,
-            ),
-        ).unwrap();
+            ListingSource::from_file_and_path(clause_name!("attributed_variables"), path_buf),
+        )
+        .unwrap();
 
         let mut path_buf = current_dir();
         path_buf.push("machine/project_attributes.pl");
@@ -257,11 +250,9 @@ impl Machine {
         bootstrapping_compile(
             Stream::from(include_str!("project_attributes.pl")),
             self,
-            ListingSource::from_file_and_path(
-                clause_name!("project_attributes"),
-                path_buf,
-            ),
-        ).unwrap();
+            ListingSource::from_file_and_path(clause_name!("project_attributes"), path_buf),
+        )
+        .unwrap();
 
         if let Some(module) = self.indices.modules.get(&clause_name!("$atts")) {
             if let Some(code_index) = module.code_dir.get(&(clause_name!("driver"), 2)) {
@@ -285,7 +276,7 @@ impl Machine {
             arg_pstrs.push(self.machine_st.heap.put_complete_string(&arg));
         }
 
-        let list_addr = Addr::HeapCell(self.machine_st.heap.to_list(arg_pstrs.into_iter()));
+        let list_addr = Addr::HeapCell(self.machine_st.heap.as_list(arg_pstrs.into_iter()));
 
         self.machine_st[temp_v!(1)] = list_addr;
 
@@ -295,8 +286,7 @@ impl Machine {
         self.run_module_predicate(clause_name!("$toplevel"), (clause_name!("repl"), 0));
     }
 
-    pub fn new(user_input: Stream, user_output: Stream) -> Self
-    {
+    pub fn new(user_input: Stream, user_output: Stream) -> Self {
         use crate::ref_thread_local::RefThreadLocal;
 
         let mut wam = Machine {
@@ -322,16 +312,15 @@ impl Machine {
                 clause_name!("ops_and_meta_predicates.pl"),
                 lib_path.clone(),
             ),
-        ).unwrap();
+        )
+        .unwrap();
 
         bootstrapping_compile(
             Stream::from(LIBRARIES.borrow()["builtins"]),
             &mut wam,
-            ListingSource::from_file_and_path(
-                clause_name!("builtins.pl"),
-                lib_path.clone(),
-            ),
-        ).unwrap();
+            ListingSource::from_file_and_path(clause_name!("builtins.pl"), lib_path.clone()),
+        )
+        .unwrap();
 
         if let Some(builtins) = wam.indices.modules.get(&clause_name!("builtins")) {
             load_module(
@@ -350,11 +339,9 @@ impl Machine {
         bootstrapping_compile(
             Stream::from(include_str!("../loader.pl")),
             &mut wam,
-            ListingSource::from_file_and_path(
-                clause_name!("loader.pl"),
-                lib_path.clone(),
-            ),
-        ).unwrap();
+            ListingSource::from_file_and_path(clause_name!("loader.pl"), lib_path),
+        )
+        .unwrap();
 
         if let Some(loader) = wam.indices.modules.swap_remove(&clause_name!("loader")) {
             if let Some(builtins) = wam.indices.modules.get_mut(&clause_name!("builtins")) {
@@ -396,25 +383,19 @@ impl Machine {
     pub fn configure_streams(&mut self) {
         self.user_input.options.alias = Some(clause_name!("user_input"));
 
-        self.indices.stream_aliases.insert(
-            clause_name!("user_input"),
-            self.user_input.clone(),
-        );
+        self.indices
+            .stream_aliases
+            .insert(clause_name!("user_input"), self.user_input.clone());
 
-        self.indices.streams.insert(
-            self.user_input.clone()
-        );
+        self.indices.streams.insert(self.user_input.clone());
 
         self.user_output.options.alias = Some(clause_name!("user_output"));
 
-        self.indices.stream_aliases.insert(
-            clause_name!("user_output"),
-            self.user_output.clone(),
-        );
+        self.indices
+            .stream_aliases
+            .insert(clause_name!("user_output"), self.user_output.clone());
 
-        self.indices.streams.insert(
-            self.user_output.clone()
-        );
+        self.indices.streams.insert(self.user_output.clone());
     }
 
     fn throw_session_error(&mut self, err: SessionError, key: PredicateKey) {
@@ -425,7 +406,6 @@ impl Machine {
         let err = self.machine_st.error_form(err, stub);
 
         self.machine_st.throw_exception(err);
-        return;
     }
 
     fn handle_toplevel_command(&mut self, code_ptr: REPLCodePtr, p: LocalCodePtr) {
@@ -504,8 +484,7 @@ impl Machine {
         self.machine_st.p = CodePtr::Local(p);
     }
 
-    pub(super)
-    fn run_query(&mut self) {
+    pub(super) fn run_query(&mut self) {
         while !self.machine_st.p.is_halt() {
             self.machine_st.query_stepper(
                 &mut self.indices,
@@ -558,38 +537,32 @@ impl MachineState {
         user_input: &mut Stream,
         user_output: &mut Stream,
     ) {
-        match instr {
-            &Line::Arithmetic(ref arith_instr) => {
-                self.execute_arith_instr(arith_instr)
-            }
-            &Line::Choice(ref choice_instr) => {
+        match *instr {
+            Line::Arithmetic(ref arith_instr) => self.execute_arith_instr(arith_instr),
+            Line::Choice(ref choice_instr) => {
                 self.execute_choice_instr(choice_instr, &mut policies.call_policy)
             }
-            &Line::Cut(ref cut_instr) => {
-                self.execute_cut_instr(cut_instr, &mut policies.cut_policy)
-            }
-            &Line::Control(ref control_instr) => {
-                self.execute_ctrl_instr(
-                    indices,
-                    code_repo,
-                    &mut policies.call_policy,
-                    &mut policies.cut_policy,
-                    user_input,
-                    user_output,
-                    control_instr,
-                )
-            }
-            &Line::Fact(ref fact_instr) => {
+            Line::Cut(ref cut_instr) => self.execute_cut_instr(cut_instr, &mut policies.cut_policy),
+            Line::Control(ref control_instr) => self.execute_ctrl_instr(
+                indices,
+                code_repo,
+                &mut policies.call_policy,
+                &mut policies.cut_policy,
+                user_input,
+                user_output,
+                control_instr,
+            ),
+            Line::Fact(ref fact_instr) => {
                 self.execute_fact_instr(&fact_instr);
                 self.p += 1;
             }
-            &Line::IndexingCode(ref indexing_lines) => {
+            Line::IndexingCode(ref indexing_lines) => {
                 self.execute_indexing_instr(indexing_lines, &mut policies.call_policy)
             }
-            &Line::IndexedChoice(ref choice_instr) => {
+            Line::IndexedChoice(ref choice_instr) => {
                 self.execute_indexed_choice_instr(choice_instr, &mut policies.call_policy)
             }
-            &Line::Query(ref query_instr) => {
+            Line::Query(ref query_instr) => {
                 self.execute_query_instr(&query_instr);
                 self.p += 1;
             }
@@ -604,19 +577,16 @@ impl MachineState {
         user_input: &mut Stream,
         user_output: &mut Stream,
     ) {
-        let instr = match code_repo.lookup_instr(self.last_call, &self.p) {
-            Some(instr) => instr,
-            None => return,
-        };
-
-        self.dispatch_instr(
-            instr.as_ref(),
-            indices,
-            policies,
-            code_repo,
-            user_input,
-            user_output,
-        );
+        if let Some(instr) = code_repo.lookup_instr(self.last_call, &self.p) {
+            self.dispatch_instr(
+                instr.as_ref(),
+                indices,
+                policies,
+                code_repo,
+                user_input,
+                user_output,
+            );
+        }
     }
 
     fn backtrack(&mut self) {
@@ -640,10 +610,9 @@ impl MachineState {
 
     fn check_machine_index(&mut self, code_repo: &CodeRepo) -> bool {
         match self.p {
-            CodePtr::Local(LocalCodePtr::DirEntry(p)) |
-            CodePtr::Local(LocalCodePtr::IndexingBuf(p, ..))
-                if p < code_repo.code.len() => {
-                }
+            CodePtr::Local(LocalCodePtr::DirEntry(p))
+            | CodePtr::Local(LocalCodePtr::IndexingBuf(p, ..))
+                if p < code_repo.code.len() => {}
             CodePtr::Local(LocalCodePtr::Halt) | CodePtr::REPL(..) => {
                 return false;
             }
@@ -656,8 +625,7 @@ impl MachineState {
                 return false;
             }
             */
-            _ => {
-            }
+            _ => {}
         }
 
         true
@@ -721,13 +689,7 @@ impl MachineState {
         user_output: &mut Stream,
     ) {
         loop {
-            self.execute_instr(
-                indices,
-                policies,
-                code_repo,
-                user_input,
-                user_output,
-            );
+            self.execute_instr(indices, policies, code_repo, user_input, user_output);
 
             if self.fail {
                 self.backtrack();

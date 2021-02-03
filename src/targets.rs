@@ -10,14 +10,14 @@ pub trait CompilationTarget<'a> {
 
     fn iter(_: &'a Term) -> Self::Iterator;
 
-    fn to_constant(_: Level, _: Constant, _: RegType) -> Self;
-    fn to_list(_: Level, _: RegType) -> Self;
-    fn to_structure(_: ClauseType, _: usize, _: RegType) -> Self;
+    fn from_constant(_: Level, _: Constant, _: RegType) -> Self;
+    fn from_list(_: Level, _: RegType) -> Self;
+    fn from_structure(_: ClauseType, _: usize, _: RegType) -> Self;
 
-    fn to_void(_: usize) -> Self;
+    fn from_void(_: usize) -> Self;
     fn is_void_instr(&self) -> bool;
 
-    fn to_pstr(lvl: Level, string: String, r: RegType, has_tail: bool) -> Self;
+    fn from_pstr(lvl: Level, string: String, r: RegType, has_tail: bool) -> Self;
 
     fn incr_void_instr(&mut self);
 
@@ -41,37 +41,33 @@ impl<'a> CompilationTarget<'a> for FactInstruction {
         breadth_first_iter(term, false) // do not iterate over the root clause if one exists.
     }
 
-    fn to_constant(lvl: Level, constant: Constant, reg: RegType) -> Self {
+    fn from_constant(lvl: Level, constant: Constant, reg: RegType) -> Self {
         FactInstruction::GetConstant(lvl, constant, reg)
     }
 
-    fn to_structure(ct: ClauseType, arity: usize, reg: RegType) -> Self {
+    fn from_structure(ct: ClauseType, arity: usize, reg: RegType) -> Self {
         FactInstruction::GetStructure(ct, arity, reg)
     }
 
-    fn to_list(lvl: Level, reg: RegType) -> Self {
+    fn from_list(lvl: Level, reg: RegType) -> Self {
         FactInstruction::GetList(lvl, reg)
     }
 
-    fn to_void(subterms: usize) -> Self {
+    fn from_void(subterms: usize) -> Self {
         FactInstruction::UnifyVoid(subterms)
     }
 
     fn is_void_instr(&self) -> bool {
-        match self {
-            &FactInstruction::UnifyVoid(_) => true,
-            _ => false,
-        }
+        matches!(self, FactInstruction::UnifyVoid(_))
     }
 
-    fn to_pstr(lvl: Level, string: String, r: RegType, has_tail: bool) -> Self {
+    fn from_pstr(lvl: Level, string: String, r: RegType, has_tail: bool) -> Self {
         FactInstruction::GetPartialString(lvl, string, r, has_tail)
     }
 
     fn incr_void_instr(&mut self) {
-        match self {
-            &mut FactInstruction::UnifyVoid(ref mut incr) => *incr += 1,
-            _ => {}
+        if let FactInstruction::UnifyVoid(ref mut incr) = *self {
+            *incr += 1
         }
     }
 
@@ -111,37 +107,33 @@ impl<'a> CompilationTarget<'a> for QueryInstruction {
         post_order_iter(term)
     }
 
-    fn to_structure(ct: ClauseType, arity: usize, r: RegType) -> Self {
+    fn from_structure(ct: ClauseType, arity: usize, r: RegType) -> Self {
         QueryInstruction::PutStructure(ct, arity, r)
     }
 
-    fn to_constant(lvl: Level, constant: Constant, reg: RegType) -> Self {
+    fn from_constant(lvl: Level, constant: Constant, reg: RegType) -> Self {
         QueryInstruction::PutConstant(lvl, constant, reg)
     }
 
-    fn to_list(lvl: Level, reg: RegType) -> Self {
+    fn from_list(lvl: Level, reg: RegType) -> Self {
         QueryInstruction::PutList(lvl, reg)
     }
 
-    fn to_pstr(lvl: Level, string: String, r: RegType, has_tail: bool) -> Self {
+    fn from_pstr(lvl: Level, string: String, r: RegType, has_tail: bool) -> Self {
         QueryInstruction::PutPartialString(lvl, string, r, has_tail)
     }
 
-    fn to_void(subterms: usize) -> Self {
+    fn from_void(subterms: usize) -> Self {
         QueryInstruction::SetVoid(subterms)
     }
 
     fn is_void_instr(&self) -> bool {
-        match self {
-            &QueryInstruction::SetVoid(_) => true,
-            _ => false,
-        }
+        matches!(self, &QueryInstruction::SetVoid(_))
     }
 
     fn incr_void_instr(&mut self) {
-        match self {
-            &mut QueryInstruction::SetVoid(ref mut incr) => *incr += 1,
-            _ => {}
+        if let QueryInstruction::SetVoid(ref mut incr) = *self {
+            *incr += 1
         }
     }
 

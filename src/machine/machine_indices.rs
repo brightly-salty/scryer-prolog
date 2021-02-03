@@ -3,16 +3,16 @@ use crate::prolog_parser_rebis::ast::*;
 use crate::clause_types::*;
 use crate::fixtures::*;
 use crate::forms::*;
-use crate::machine::CompilationTarget;
+use crate::instructions::*;
 use crate::machine::code_repo::CodeRepo;
-use crate::machine::Ball;
 use crate::machine::heap::*;
 use crate::machine::machine_state::*;
 use crate::machine::partial_string::*;
 use crate::machine::raw_block::RawBlockTraits;
 use crate::machine::streams::Stream;
 use crate::machine::term_stream::LoadStatePayload;
-use crate::instructions::*;
+use crate::machine::Ball;
+use crate::machine::CompilationTarget;
 use crate::ordered_float::OrderedFloat;
 use crate::rug::{Integer, Rational};
 
@@ -75,7 +75,7 @@ pub enum Addr {
     Usize(usize),
 }
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Ref {
     AttrVar(usize),
     HeapCell(usize),
@@ -92,24 +92,24 @@ impl Ref {
     }
 }
 
+impl PartialOrd for Ref {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Ord for Ref {
-    fn cmp(&self, other: &Ref) -> Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Ref::AttrVar(h1), Ref::AttrVar(h2))
-          | (Ref::HeapCell(h1), Ref::HeapCell(h2))
-          | (Ref::HeapCell(h1), Ref::AttrVar(h2))
-          | (Ref::AttrVar(h1), Ref::HeapCell(h2)) => {
-                h1.cmp(&h2)
-            }
+            | (Ref::HeapCell(h1), Ref::HeapCell(h2))
+            | (Ref::HeapCell(h1), Ref::AttrVar(h2))
+            | (Ref::AttrVar(h1), Ref::HeapCell(h2)) => h1.cmp(&h2),
             (Ref::StackCell(fr1, sc1), Ref::StackCell(fr2, sc2)) => {
                 fr1.cmp(&fr2).then_with(|| sc1.cmp(&sc2))
             }
-            (Ref::StackCell(..), _) => {
-                Ordering::Greater
-            }
-            (_, Ref::StackCell(..)) => {
-                Ordering::Less
-            }
+            (Ref::StackCell(..), _) => Ordering::Greater,
+            (_, Ref::StackCell(..)) => Ordering::Less,
         }
     }
 }
@@ -124,35 +124,23 @@ impl PartialEq<Ref> for Addr {
 impl PartialOrd<Ref> for Addr {
     fn partial_cmp(&self, r: &Ref) -> Option<Ordering> {
         match self {
-            &Addr::StackCell(fr, sc) => {
-                match *r {
-                    Ref::AttrVar(_) | Ref::HeapCell(_) => {
+            &Addr::StackCell(fr, sc) => match *r {
+                Ref::AttrVar(_) | Ref::HeapCell(_) => Some(Ordering::Greater),
+                Ref::StackCell(fr1, sc1) => {
+                    if fr1 < fr || (fr1 == fr && sc1 < sc) {
                         Some(Ordering::Greater)
-                    }
-                    Ref::StackCell(fr1, sc1) => {
-                        if fr1 < fr || (fr1 == fr && sc1 < sc) {
-                            Some(Ordering::Greater)
-                        } else if fr1 == fr && sc1 == sc {
-                            Some(Ordering::Equal)
-                        } else {
-                            Some(Ordering::Less)
-                        }
-                    }
-                }
-            }
-            &Addr::HeapCell(h) | &Addr::AttrVar(h) => {
-                match r {
-                    Ref::StackCell(..) => {
+                    } else if fr1 == fr && sc1 == sc {
+                        Some(Ordering::Equal)
+                    } else {
                         Some(Ordering::Less)
                     }
-                    Ref::AttrVar(h1) | Ref::HeapCell(h1) => {
-                        h.partial_cmp(h1)
-                    }
                 }
-            }
-            _ => {
-                None
-            }
+            },
+            &Addr::HeapCell(h) | &Addr::AttrVar(h) => match r {
+                Ref::StackCell(..) => Some(Ordering::Less),
+                Ref::AttrVar(h1) | Ref::HeapCell(h1) => h.partial_cmp(h1),
+            },
+            _ => None,
         }
     }
 }
@@ -160,134 +148,88 @@ impl PartialOrd<Ref> for Addr {
 impl Addr {
     #[inline]
     pub fn is_heap_bound(&self) -> bool {
-        match self {
-            Addr::Char(_) | Addr::EmptyList |
-            Addr::CutPoint(_) | Addr::Usize(_) | Addr::Fixnum(_) |
-            Addr::Float(_) => {
-                false
-            }
-            _ => {
-                true
-            }
-        }
+        !matches!(
+            self,
+            Addr::Char(_)
+                | Addr::EmptyList
+                | Addr::CutPoint(_)
+                | Addr::Usize(_)
+                | Addr::Fixnum(_)
+                | Addr::Float(_)
+        )
     }
 
     #[inline]
     pub fn is_ref(&self) -> bool {
-        match self {
-            Addr::HeapCell(_) | Addr::StackCell(_, _) | Addr::AttrVar(_) => {
-                true
-            }
-            _ => {
-                false
-            }
-        }
+        matches!(
+            self,
+            Addr::HeapCell(_) | Addr::StackCell(_, _) | Addr::AttrVar(_)
+        )
     }
 
     #[inline]
     pub fn as_var(&self) -> Option<Ref> {
-        match self {
-            &Addr::AttrVar(h) => Some(Ref::AttrVar(h)),
-            &Addr::HeapCell(h) => Some(Ref::HeapCell(h)),
-            &Addr::StackCell(fr, sc) => Some(Ref::StackCell(fr, sc)),
+        match *self {
+            Addr::AttrVar(h) => Some(Ref::AttrVar(h)),
+            Addr::HeapCell(h) => Some(Ref::HeapCell(h)),
+            Addr::StackCell(fr, sc) => Some(Ref::StackCell(fr, sc)),
             _ => None,
         }
     }
 
-    pub(super)
-    fn order_category(&self, heap: &Heap) -> Option<TermOrderCategory> {
+    pub(super) fn order_category(&self, heap: &Heap) -> Option<TermOrderCategory> {
         match Number::try_from((*self, heap)) {
             Ok(Number::Integer(_)) | Ok(Number::Fixnum(_)) | Ok(Number::Rational(_)) => {
                 Some(TermOrderCategory::Integer)
             }
-            Ok(Number::Float(_)) => {
-                Some(TermOrderCategory::FloatingPoint)
-            }
-            _ => {
-                match self {
-                    Addr::HeapCell(_) | Addr::AttrVar(_) | Addr::StackCell(..) => {
-                        Some(TermOrderCategory::Variable)
-                    }
-                    Addr::Float(_) => {
-                        Some(TermOrderCategory::FloatingPoint)
-                    }
-                    &Addr::Con(h) => {
-                        match &heap[h] {
-                            HeapCellValue::Atom(..) => {
-                                Some(TermOrderCategory::Atom)
-                            }
-                            HeapCellValue::DBRef(_) => {
-                                None
-                            }
-                            _ => {
-                                unreachable!()
-                            }
-                        }
-                    }
-                    Addr::Char(_) | Addr::EmptyList => {
-                        Some(TermOrderCategory::Atom)
-                    }
-                    Addr::Fixnum(_) | Addr::Usize(_) => {
-                        Some(TermOrderCategory::Integer)
-                    }
-                    Addr::Lis(_) | Addr::PStrLocation(..) | Addr::Str(_) => {
-                        Some(TermOrderCategory::Compound)
-                    }
-                    Addr::CutPoint(_) | Addr::LoadStatePayload(_) | Addr::Stream(_) | Addr::TcpListener(_) => {
-                        None
-                    }
+            Ok(Number::Float(_)) => Some(TermOrderCategory::FloatingPoint),
+            _ => match self {
+                Addr::HeapCell(_) | Addr::AttrVar(_) | Addr::StackCell(..) => {
+                    Some(TermOrderCategory::Variable)
                 }
-            }
+                Addr::Float(_) => Some(TermOrderCategory::FloatingPoint),
+                &Addr::Con(h) => match &heap[h] {
+                    HeapCellValue::Atom(..) => Some(TermOrderCategory::Atom),
+                    HeapCellValue::DBRef(_) => None,
+                    _ => {
+                        unreachable!()
+                    }
+                },
+                Addr::Char(_) | Addr::EmptyList => Some(TermOrderCategory::Atom),
+                Addr::Fixnum(_) | Addr::Usize(_) => Some(TermOrderCategory::Integer),
+                Addr::Lis(_) | Addr::PStrLocation(..) | Addr::Str(_) => {
+                    Some(TermOrderCategory::Compound)
+                }
+                Addr::CutPoint(_)
+                | Addr::LoadStatePayload(_)
+                | Addr::Stream(_)
+                | Addr::TcpListener(_) => None,
+            },
         }
     }
 
     pub fn as_constant_index(&self, machine_st: &MachineState) -> Option<Constant> {
-        match self {
-            &Addr::Char(c) => {
-                Some(Constant::Char(c))
-            }
-            &Addr::Con(h) => {
-                match &machine_st.heap[h] {
-                    &HeapCellValue::Atom(ref name, _) if name.is_char() => {
-                        Some(Constant::Char(name.as_str().chars().next().unwrap()))
-                    }
-                    &HeapCellValue::Atom(ref name, _) => {
-                        Some(Constant::Atom(name.clone(), None))
-                    }
-                    &HeapCellValue::Integer(ref n) => {
-                        Some(Constant::Integer(n.clone()))
-                    }
-                    &HeapCellValue::Rational(ref n) => {
-                        Some(Constant::Rational(n.clone()))
-                    }
-                    _ => {
-                        None
-                    }
+        match *self {
+            Addr::Char(c) => Some(Constant::Char(c)),
+            Addr::Con(h) => match machine_st.heap[h] {
+                HeapCellValue::Atom(ref name, _) if name.is_char() => {
+                    Some(Constant::Char(name.as_str().chars().next().unwrap()))
                 }
-            }
-            &Addr::EmptyList => {
-                Some(Constant::EmptyList)
-            }
-            &Addr::Fixnum(n) => {
-                Some(Constant::Fixnum(n))
-            }
-            &Addr::Float(f) => {
-                Some(Constant::Float(f))
-            }
-            &Addr::Usize(n) => {
-                Some(Constant::Usize(n))
-            }
-            _ => {
-                None
-            }
+                HeapCellValue::Atom(ref name, _) => Some(Constant::Atom(name.clone(), None)),
+                HeapCellValue::Integer(ref n) => Some(Constant::Integer(n.clone())),
+                HeapCellValue::Rational(ref n) => Some(Constant::Rational(n.clone())),
+                _ => None,
+            },
+            Addr::EmptyList => Some(Constant::EmptyList),
+            Addr::Fixnum(n) => Some(Constant::Fixnum(n)),
+            Addr::Float(f) => Some(Constant::Float(f)),
+            Addr::Usize(n) => Some(Constant::Usize(n)),
+            _ => None,
         }
     }
 
     pub fn is_protected(&self, e: usize) -> bool {
-        match self {
-            &Addr::StackCell(addr, _) if addr >= e => false,
-            _ => true,
-        }
+        !matches!(*self, Addr::StackCell(addr, _) if addr >= e)
     }
 }
 
@@ -348,7 +290,7 @@ impl Sub<usize> for Addr {
 
 impl SubAssign<usize> for Addr {
     fn sub_assign(&mut self, rhs: usize) {
-        *self = self.clone() - rhs;
+        *self = *self - rhs;
     }
 }
 
@@ -371,7 +313,7 @@ pub enum HeapCellValue {
     Atom(ClauseName, Option<SharedOpDesc>),
     DBRef(DBRef),
     Integer(Rc<Integer>),
-    LoadStatePayload(LoadStatePayload),
+    LoadStatePayload(Box<LoadStatePayload>),
     NamedStr(usize, ClauseName, Option<SharedOpDesc>), // arity, name, precedence/Specifier if it has one.
     Rational(Rc<Rational>),
     PartialString(PartialString, bool), // the partial string, a bool indicating whether it came from a Constant.
@@ -383,64 +325,38 @@ impl HeapCellValue {
     #[inline]
     pub fn as_addr(&self, focus: usize) -> Addr {
         match self {
-            HeapCellValue::Addr(ref a) => {
-                *a
-            }
-            HeapCellValue::Atom(..) | HeapCellValue::DBRef(..) | HeapCellValue::Integer(..) |
-            HeapCellValue::Rational(..) => {
-                Addr::Con(focus)
-            }
-            HeapCellValue::LoadStatePayload(_) => {
-                Addr::LoadStatePayload(focus)
-            }
-            HeapCellValue::NamedStr(_, _, _) => {
-                Addr::Str(focus)
-            }
-            HeapCellValue::PartialString(..) => {
-                Addr::PStrLocation(focus, 0)
-            }
-            HeapCellValue::Stream(_) => {
-                Addr::Stream(focus)
-            }
-            HeapCellValue::TcpListener(_) => {
-                Addr::TcpListener(focus)
-            }
+            HeapCellValue::Addr(ref a) => *a,
+            HeapCellValue::Atom(..)
+            | HeapCellValue::DBRef(..)
+            | HeapCellValue::Integer(..)
+            | HeapCellValue::Rational(..) => Addr::Con(focus),
+            HeapCellValue::LoadStatePayload(_) => Addr::LoadStatePayload(focus),
+            HeapCellValue::NamedStr(_, _, _) => Addr::Str(focus),
+            HeapCellValue::PartialString(..) => Addr::PStrLocation(focus, 0),
+            HeapCellValue::Stream(_) => Addr::Stream(focus),
+            HeapCellValue::TcpListener(_) => Addr::TcpListener(focus),
         }
     }
 
     #[inline]
     pub fn context_free_clone(&self) -> HeapCellValue {
-        match self {
-            &HeapCellValue::Addr(addr) => {
-                HeapCellValue::Addr(addr)
-            }
-            &HeapCellValue::Atom(ref name, ref op) => {
-                HeapCellValue::Atom(name.clone(), op.clone())
-            }
-            &HeapCellValue::DBRef(ref db_ref) => {
-                HeapCellValue::DBRef(db_ref.clone())
-            }
-            &HeapCellValue::Integer(ref n) => {
-                HeapCellValue::Integer(n.clone())
-            }
-            &HeapCellValue::LoadStatePayload(_) => {
+        match *self {
+            Self::Addr(addr) => HeapCellValue::Addr(addr),
+            Self::Atom(ref name, ref op) => HeapCellValue::Atom(name.clone(), op.clone()),
+            Self::DBRef(ref db_ref) => HeapCellValue::DBRef(db_ref.clone()),
+            Self::Integer(ref n) => HeapCellValue::Integer(n.clone()),
+            Self::LoadStatePayload(_) => {
                 HeapCellValue::Atom(clause_name!("$live_term_stream"), None)
             }
-            &HeapCellValue::NamedStr(arity, ref name, ref op) => {
+            Self::NamedStr(arity, ref name, ref op) => {
                 HeapCellValue::NamedStr(arity, name.clone(), op.clone())
             }
-            &HeapCellValue::Rational(ref r) => {
-                HeapCellValue::Rational(r.clone())
-            }
-            &HeapCellValue::PartialString(ref pstr, has_tail) => {
+            Self::Rational(ref r) => HeapCellValue::Rational(r.clone()),
+            Self::PartialString(ref pstr, has_tail) => {
                 HeapCellValue::PartialString(pstr.clone(), has_tail)
             }
-            &HeapCellValue::Stream(ref stream) => {
-                HeapCellValue::Stream(stream.clone())
-            }
-            &HeapCellValue::TcpListener(_) => {
-                HeapCellValue::Atom(clause_name!("$tcp_listener"), None)
-            }
+            Self::Stream(ref stream) => HeapCellValue::Stream(stream.clone()),
+            Self::TcpListener(_) => HeapCellValue::Atom(clause_name!("$tcp_listener"), None),
         }
     }
 }
@@ -473,23 +389,20 @@ impl Deref for CodeIndex {
 
 impl CodeIndex {
     #[inline]
-    pub(super)
-    fn new(ptr: IndexPtr) -> Self {
+    pub(super) fn new(ptr: IndexPtr) -> Self {
         CodeIndex(Rc::new(Cell::new(ptr)))
     }
 
     #[inline]
     pub fn is_undefined(&self) -> bool {
-        match self.0.get() {
-            IndexPtr::Undefined => true, // | &IndexPtr::DynamicUndefined => true,
-            _ => false
-        }
+        matches!(self.0.get(), IndexPtr::Undefined)
     }
 
     pub fn local(&self) -> Option<usize> {
-        match self.0.get() {
-            IndexPtr::Index(i) => Some(i),
-            _ => None,
+        if let IndexPtr::Index(i) = self.0.get() {
+            Some(i)
+        } else {
+            None
         }
     }
 }
@@ -533,28 +446,24 @@ pub enum CodePtr {
     CallN(usize, LocalCodePtr, bool),               // arity, local, last call.
     Local(LocalCodePtr),
     // DynamicTransaction(DynamicTransactionType, LocalCodePtr), // the type of transaction, the return pointer.
-    REPL(REPLCodePtr, LocalCodePtr),                          // the REPL code, the return pointer.
+    REPL(REPLCodePtr, LocalCodePtr), // the REPL code, the return pointer.
     VerifyAttrInterrupt(usize), // location of the verify attribute interrupt code in the CodeDir.
 }
 
 impl CodePtr {
     pub fn local(&self) -> LocalCodePtr {
-        match self {
-            &CodePtr::BuiltInClause(_, ref local)
-          | &CodePtr::CallN(_, ref local, _)
-          | &CodePtr::Local(ref local) => local.clone(),
-            &CodePtr::VerifyAttrInterrupt(p) => LocalCodePtr::DirEntry(p),
-            &CodePtr::REPL(_, p) => p // | &CodePtr::DynamicTransaction(_, p) => p,
+        match *self {
+            CodePtr::BuiltInClause(_, ref local)
+            | CodePtr::CallN(_, ref local, _)
+            | CodePtr::Local(ref local) => *local,
+            CodePtr::VerifyAttrInterrupt(p) => LocalCodePtr::DirEntry(p),
+            CodePtr::REPL(_, p) => p, // | &CodePtr::DynamicTransaction(_, p) => p,
         }
     }
 
     #[inline]
     pub fn is_halt(&self) -> bool {
-        if let CodePtr::Local(LocalCodePtr::Halt) = self {
-            true
-        } else {
-            false
-        }
+        matches!(self, CodePtr::Local(LocalCodePtr::Halt))
     }
 }
 
@@ -563,21 +472,18 @@ pub enum LocalCodePtr {
     DirEntry(usize), // offset
     Halt,
     IndexingBuf(usize, usize, usize), // DirEntry offset, first internal offset, second internal offset
-    // TopLevel(usize, usize), // chunk_num, offset
+                                      // TopLevel(usize, usize), // chunk_num, offset
 }
 
 impl LocalCodePtr {
-    pub(crate)
-    fn assign_if_local(&mut self, cp: CodePtr) {
-        match cp {
-            CodePtr::Local(local) => *self = local,
-            _ => {}
+    pub(crate) fn assign_if_local(&mut self, cp: CodePtr) {
+        if let CodePtr::Local(local) = cp {
+            *self = local
         }
     }
 
     #[inline]
-    pub(crate)
-    fn abs_loc(&self) -> usize {
+    pub(crate) fn abs_loc(&self) -> usize {
         match self {
             LocalCodePtr::DirEntry(ref p) => *p,
             LocalCodePtr::IndexingBuf(ref p, ..) => *p,
@@ -585,35 +491,24 @@ impl LocalCodePtr {
         }
     }
 
-    pub(crate)
-    fn is_reset_cont_marker(&self, code_repo: &CodeRepo, last_call: bool) -> bool {
-        match code_repo.lookup_instr(last_call, &CodePtr::Local(*self)) {
-            Some(line) => {
-                match line.as_ref() {
-                    Line::Control(ControlInstruction::CallClause(ref ct, ..)) => {
-                        if let ClauseType::System(SystemClauseType::ResetContinuationMarker) = *ct {
-                            return true;
-                        }
-                    }
-                    _ => {}
+    pub(crate) fn is_reset_cont_marker(&self, code_repo: &CodeRepo, last_call: bool) -> bool {
+        if let Some(line) = code_repo.lookup_instr(last_call, &CodePtr::Local(*self)) {
+            if let Line::Control(ControlInstruction::CallClause(ref ct, ..)) = line.as_ref() {
+                if let ClauseType::System(SystemClauseType::ResetContinuationMarker) = *ct {
+                    return true;
                 }
             }
-            None => {}
         }
 
         false
     }
 
-    pub(crate)
-    fn as_functor<T: RawBlockTraits>(&self, heap: &mut HeapTemplate<T>) -> Addr {
+    pub(crate) fn as_functor<T: RawBlockTraits>(&self, heap: &mut HeapTemplate<T>) -> Addr {
         let addr = Addr::HeapCell(heap.h());
 
         match self {
             LocalCodePtr::DirEntry(p) => {
-                heap.append(functor!(
-                    "dir_entry",
-                    [integer(*p)]
-                ));
+                heap.append(functor!("dir_entry", [integer(*p)]));
             }
             LocalCodePtr::Halt => {
                 heap.append(functor!("halt"));
@@ -655,7 +550,7 @@ impl PartialOrd<CodePtr> for CodePtr {
 impl PartialOrd<LocalCodePtr> for LocalCodePtr {
     fn partial_cmp(&self, other: &LocalCodePtr) -> Option<Ordering> {
         match (self, other) {
-	        (&LocalCodePtr::DirEntry(p1), &LocalCodePtr::DirEntry(ref p2)) |
+            (&LocalCodePtr::DirEntry(p1), &LocalCodePtr::DirEntry(ref p2)) |
             (&LocalCodePtr::TopLevel(_, p1), &LocalCodePtr::TopLevel(_, ref p2)) => {
                 p1.partial_cmp(p2)
             }
@@ -690,12 +585,9 @@ impl Add<usize> for LocalCodePtr {
     #[inline]
     fn add(self, rhs: usize) -> Self::Output {
         match self {
-            LocalCodePtr::DirEntry(p) =>
-                LocalCodePtr::DirEntry(p + rhs),
-            LocalCodePtr::Halt =>
-                unreachable!(),
-            LocalCodePtr::IndexingBuf(p, o, i) =>
-                LocalCodePtr::IndexingBuf(p, o, i + rhs),
+            LocalCodePtr::DirEntry(p) => LocalCodePtr::DirEntry(p + rhs),
+            LocalCodePtr::Halt => unreachable!(),
+            LocalCodePtr::IndexingBuf(p, o, i) => LocalCodePtr::IndexingBuf(p, o, i + rhs),
         }
     }
 }
@@ -706,12 +598,11 @@ impl Sub<usize> for LocalCodePtr {
     #[inline]
     fn sub(self, rhs: usize) -> Self::Output {
         match self {
-            LocalCodePtr::DirEntry(p) =>
-                p.checked_sub(rhs).map(LocalCodePtr::DirEntry),
-            LocalCodePtr::Halt =>
-                unreachable!(),
-            LocalCodePtr::IndexingBuf(p, o, i) =>
-                i.checked_sub(rhs).map(|r| LocalCodePtr::IndexingBuf(p, o, r)),
+            LocalCodePtr::DirEntry(p) => p.checked_sub(rhs).map(LocalCodePtr::DirEntry),
+            LocalCodePtr::Halt => unreachable!(),
+            LocalCodePtr::IndexingBuf(p, o, i) => i
+                .checked_sub(rhs)
+                .map(|r| LocalCodePtr::IndexingBuf(p, o, r)),
         }
     }
 }
@@ -720,23 +611,20 @@ impl SubAssign<usize> for LocalCodePtr {
     #[inline]
     fn sub_assign(&mut self, rhs: usize) {
         match self {
-            LocalCodePtr::DirEntry(ref mut p) =>
-                *p -= rhs,
-            LocalCodePtr::Halt | LocalCodePtr::IndexingBuf(..) =>
-                unreachable!(),
+            LocalCodePtr::DirEntry(ref mut p) => *p -= rhs,
+            LocalCodePtr::Halt | LocalCodePtr::IndexingBuf(..) => unreachable!(),
         }
     }
 }
 
-
 impl AddAssign<usize> for LocalCodePtr {
     #[inline]
     fn add_assign(&mut self, rhs: usize) {
-        match self {
-            &mut LocalCodePtr::DirEntry(ref mut p) /* |
+        match *self {
+            LocalCodePtr::DirEntry(ref mut p) /* |
             &mut LocalCodePtr::TopLevel(_, ref mut p) */    => *p += rhs,
-            &mut LocalCodePtr::IndexingBuf(_, _, ref mut i) => *i += rhs,
-            &mut LocalCodePtr::Halt => unreachable!(),
+            LocalCodePtr::IndexingBuf(_, _, ref mut i) => *i += rhs,
+            LocalCodePtr::Halt => unreachable!(),
         }
     }
 }
@@ -746,14 +634,12 @@ impl Add<usize> for CodePtr {
 
     fn add(self, rhs: usize) -> Self::Output {
         match self {
-            p @ CodePtr::REPL(..) |
-            p @ CodePtr::VerifyAttrInterrupt(_) => { // |
-            // p @ CodePtr::DynamicTransaction(..) => {
+            p @ CodePtr::REPL(..) | p @ CodePtr::VerifyAttrInterrupt(_) => {
+                // |
+                // p @ CodePtr::DynamicTransaction(..) => {
                 p
             }
-            CodePtr::Local(local) => {
-                CodePtr::Local(local + rhs)
-            }
+            CodePtr::Local(local) => CodePtr::Local(local + rhs),
             CodePtr::BuiltInClause(_, local) | CodePtr::CallN(_, local, _) => {
                 CodePtr::Local(local + rhs)
             }
@@ -763,9 +649,9 @@ impl Add<usize> for CodePtr {
 
 impl AddAssign<usize> for CodePtr {
     fn add_assign(&mut self, rhs: usize) {
-        match self {
-            &mut CodePtr::VerifyAttrInterrupt(_) => {}
-            &mut CodePtr::Local(ref mut local) => *local += rhs,
+        match *self {
+            CodePtr::VerifyAttrInterrupt(_) => {}
+            CodePtr::Local(ref mut local) => *local += rhs,
             _ => *self = CodePtr::Local(self.local() + rhs),
         }
     }
@@ -774,13 +660,13 @@ impl AddAssign<usize> for CodePtr {
 impl SubAssign<usize> for CodePtr {
     #[inline]
     fn sub_assign(&mut self, rhs: usize) {
-        match self {
-            CodePtr::Local(ref mut local) => *local -= rhs,
-            _ => unreachable!(),
+        if let CodePtr::Local(ref mut local) = self {
+            *local -= rhs
+        } else {
+            unreachable!()
         }
     }
 }
-
 
 pub type HeapVarDict = IndexMap<Rc<Var>, Addr>;
 pub type AllocVarDict = IndexMap<Rc<Var>, VarData>;
@@ -827,23 +713,17 @@ impl IndexStore {
         key: &PredicateKey,
     ) -> Option<&mut PredicateSkeleton> {
         match (key.0.as_str(), key.1) {
-            ("term_expansion", 2) => {
-                self.extensible_predicates.get_mut(key)
-            }
-            _ => {
-                match compilation_target {
-                    CompilationTarget::User => {
-                        self.extensible_predicates.get_mut(key)
-                    }
-                    CompilationTarget::Module(ref module_name) => {
-                        if let Some(module) = self.modules.get_mut(module_name) {
-                            module.extensible_predicates.get_mut(key)
-                        } else {
-                            None
-                        }
+            ("term_expansion", 2) => self.extensible_predicates.get_mut(key),
+            _ => match compilation_target {
+                CompilationTarget::User => self.extensible_predicates.get_mut(key),
+                CompilationTarget::Module(ref module_name) => {
+                    if let Some(module) = self.modules.get_mut(module_name) {
+                        module.extensible_predicates.get_mut(key)
+                    } else {
+                        None
                     }
                 }
-            }
+            },
         }
     }
 
@@ -855,19 +735,17 @@ impl IndexStore {
         match (key.0.as_str(), key.1) {
             ("term_expansion", 2) => {
                 self.extensible_predicates.remove(key);
-            },
-            _ => {
-                match compilation_target {
-                    CompilationTarget::User => {
-                        self.extensible_predicates.remove(key);
-                    }
-                    CompilationTarget::Module(ref module_name) => {
-                        if let Some(module) = self.modules.get_mut(module_name) {
-                            module.extensible_predicates.remove(key);
-                        }
+            }
+            _ => match compilation_target {
+                CompilationTarget::User => {
+                    self.extensible_predicates.remove(key);
+                }
+                CompilationTarget::Module(ref module_name) => {
+                    if let Some(module) = self.modules.get_mut(module_name) {
+                        module.extensible_predicates.remove(key);
                     }
                 }
-            }
+            },
         }
     }
 
@@ -880,15 +758,9 @@ impl IndexStore {
     ) -> Option<CodeIndex> {
         if module.as_str() == "user" {
             match ClauseType::from(name, arity, op_spec) {
-                ClauseType::Named(name, arity, _) => {
-                    self.code_dir.get(&(name, arity)).cloned()
-                }
-                ClauseType::Op(name, spec, ..) => {
-                    self.code_dir.get(&(name, spec.arity())).cloned()
-                }
-                _ => {
-                    None
-                }
+                ClauseType::Named(name, arity, _) => self.code_dir.get(&(name, arity)).cloned(),
+                ClauseType::Op(name, spec, ..) => self.code_dir.get(&(name, spec.arity())).cloned(),
+                _ => None,
             }
         } else {
             self.modules.get(&module).and_then(|module| {
@@ -899,9 +771,7 @@ impl IndexStore {
                     ClauseType::Op(name, spec, ..) => {
                         module.code_dir.get(&(name, spec.arity())).cloned()
                     }
-                    _ => {
-                        None
-                    }
+                    _ => None,
                 }
             })
         }
@@ -914,44 +784,32 @@ impl IndexStore {
         compilation_target: &CompilationTarget,
     ) -> Option<&Vec<MetaSpec>> {
         match compilation_target {
-            CompilationTarget::User => {
-                self.meta_predicates.get(&(name, arity))
-            }
-            CompilationTarget::Module(ref module_name) => {
-                match self.modules.get(module_name) {
-                    Some(ref module) => {
-                        module.meta_predicates.get(&(name.clone(), arity))
-                              .or_else(|| {
-                                  self.meta_predicates.get(&(name, arity))
-                              })
-                    }
-                    None => {
-                        self.meta_predicates.get(&(name, arity))
-                    }
-                }
-            }
+            CompilationTarget::User => self.meta_predicates.get(&(name, arity)),
+            CompilationTarget::Module(ref module_name) => match self.modules.get(module_name) {
+                Some(ref module) => module
+                    .meta_predicates
+                    .get(&(name.clone(), arity))
+                    .or_else(|| self.meta_predicates.get(&(name, arity))),
+                None => self.meta_predicates.get(&(name, arity)),
+            },
         }
     }
 
     pub fn is_dynamic_predicate(&self, module_name: ClauseName, key: PredicateKey) -> bool {
         match module_name.as_str() {
-            "user" => {
-                self.extensible_predicates.get(&key)
+            "user" => self
+                .extensible_predicates
+                .get(&key)
+                .map(|skeleton| skeleton.is_dynamic)
+                .unwrap_or(false),
+            _ => match self.modules.get(&module_name) {
+                Some(ref module) => module
+                    .extensible_predicates
+                    .get(&key)
                     .map(|skeleton| skeleton.is_dynamic)
-                    .unwrap_or(false)
-            }
-            _ => {
-                match self.modules.get(&module_name) {
-                    Some(ref module) => {
-                        module.extensible_predicates.get(&key)
-                              .map(|skeleton| skeleton.is_dynamic)
-                              .unwrap_or(false)
-                    }
-                    None => {
-                        false
-                    }
-                }
-            }
+                    .unwrap_or(false),
+                None => false,
+            },
         }
     }
 
@@ -960,8 +818,7 @@ impl IndexStore {
         IndexStore::default()
     }
 
-    pub(super)
-    fn get_cleaner_sites(&self) -> (usize, usize) {
+    pub(super) fn get_cleaner_sites(&self) -> (usize, usize) {
         let r_w_h = clause_name!("run_cleaners_with_handling");
         let r_wo_h = clause_name!("run_cleaners_without_handling");
         let iso_ext = clause_name!("iso_ext");
@@ -979,7 +836,7 @@ impl IndexStore {
             }
         }
 
-        return (0, 0);
+        (0, 0)
     }
 }
 
@@ -992,28 +849,28 @@ pub enum RefOrOwned<'a, T: 'a> {
 
 impl<'a, T: 'a + fmt::Debug> fmt::Debug for RefOrOwned<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            &RefOrOwned::Borrowed(ref borrowed) =>
-                write!(f, "Borrowed({:?})", borrowed),
-            &RefOrOwned::Owned(ref owned) =>
-                write!(f, "Owned({:?})", owned),
+        match *self {
+            Self::Borrowed(ref borrowed) => write!(f, "Borrowed({:?})", borrowed),
+            Self::Owned(ref owned) => write!(f, "Owned({:?})", owned),
         }
     }
 }
 
 impl<'a, T> RefOrOwned<'a, T> {
     pub fn as_ref(&'a self) -> &'a T {
-        match self {
-            &RefOrOwned::Borrowed(r) => r,
-            &RefOrOwned::Owned(ref r) => r,
+        match *self {
+            Self::Borrowed(r) => r,
+            Self::Owned(ref r) => r,
         }
     }
 
-    pub fn to_owned(self) -> T where T: Clone
+    pub fn into_owned(self) -> T
+    where
+        T: Clone,
     {
         match self {
-            RefOrOwned::Borrowed(item) => item.clone(),
-            RefOrOwned::Owned(item) => item,
+            Self::Borrowed(item) => item.clone(),
+            Self::Owned(item) => item,
         }
     }
 }

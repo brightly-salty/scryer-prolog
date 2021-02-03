@@ -415,16 +415,12 @@ macro_rules! ar_reg {
 macro_rules! atom_from {
     ($self:expr, $e:expr) => {
         match $e {
-            Addr::Con(h) if $self.heap.atom_at(h) => {
-                match &$self.heap[h] {
-                    HeapCellValue::Atom(ref atom, _) => {
-                        atom.clone()
-                    }
-                    _ => {
-                        unreachable!()
-                    }
+            Addr::Con(h) if $self.heap.atom_at(h) => match &$self.heap[h] {
+                HeapCellValue::Atom(ref atom, _) => atom.clone(),
+                _ => {
+                    unreachable!()
                 }
-            }
+            },
             Addr::Char(c) => {
                 clause_name!(c.to_string(), $self.atom_tbl)
             }
@@ -432,7 +428,7 @@ macro_rules! atom_from {
                 unreachable!()
             }
         }
-    }
+    };
 }
 
 macro_rules! try_or_fail {

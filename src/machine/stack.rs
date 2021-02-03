@@ -23,9 +23,7 @@ impl RawBlockTraits for StackTraits {
 
     #[inline]
     fn base_offset(base: *const u8) -> *const u8 {
-        unsafe {
-            base.offset(Self::align() as isize)
-        }
+        unsafe { base.add(Self::align()) }
     }
 }
 
@@ -163,7 +161,10 @@ impl OrFrame {
 
 impl Stack {
     pub fn new() -> Self {
-        Stack { buf: RawBlock::new(), _marker: PhantomData }
+        Stack {
+            buf: RawBlock::new(),
+            _marker: PhantomData,
+        }
     }
 
     pub fn allocate_and_frame(&mut self, num_cells: usize) -> usize {
@@ -173,7 +174,7 @@ impl Stack {
             let new_top = self.buf.new_block(frame_size);
             let e = self.buf.top as usize - self.buf.base as usize;
 
-            for idx in 0 .. num_cells {
+            for idx in 0..num_cells {
                 let offset = prelude_size::<AndFramePrelude>() + idx * mem::size_of::<Addr>();
                 ptr::write(
                     (self.buf.top as usize + offset) as *mut Addr,
@@ -197,7 +198,7 @@ impl Stack {
             let new_top = self.buf.new_block(frame_size);
             let b = self.buf.top as usize - self.buf.base as usize;
 
-            for idx in 0 .. num_cells {
+            for idx in 0..num_cells {
                 let offset = prelude_size::<OrFramePrelude>() + idx * mem::size_of::<Addr>();
                 ptr::write(
                     (self.buf.top as usize + offset) as *mut Addr,

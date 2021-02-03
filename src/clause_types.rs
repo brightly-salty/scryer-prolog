@@ -59,7 +59,7 @@ pub enum ArithmeticTerm {
 
 impl ArithmeticTerm {
     pub fn interm_or(&self, interm: usize) -> usize {
-        if let &ArithmeticTerm::Interm(interm) = self {
+        if let ArithmeticTerm::Interm(interm) = *self {
             interm
         } else {
             interm
@@ -133,17 +133,17 @@ ref_thread_local! {
 
 impl InlinedClauseType {
     pub fn name(&self) -> &'static str {
-        match self {
-            &InlinedClauseType::CompareNumber(qt, ..) => qt.name(),
-            &InlinedClauseType::IsAtom(..) => "atom",
-            &InlinedClauseType::IsAtomic(..) => "atomic",
-            &InlinedClauseType::IsCompound(..) => "compound",
-            &InlinedClauseType::IsNumber(..) => "number",
-            &InlinedClauseType::IsInteger(..) => "integer",
-            &InlinedClauseType::IsRational(..) => "rational",
-            &InlinedClauseType::IsFloat(..) => "float",
-            &InlinedClauseType::IsNonVar(..) => "nonvar",
-            &InlinedClauseType::IsVar(..) => "var",
+        match *self {
+            InlinedClauseType::CompareNumber(qt, ..) => qt.name(),
+            InlinedClauseType::IsAtom(..) => "atom",
+            InlinedClauseType::IsAtomic(..) => "atomic",
+            InlinedClauseType::IsCompound(..) => "compound",
+            InlinedClauseType::IsNumber(..) => "number",
+            InlinedClauseType::IsInteger(..) => "integer",
+            InlinedClauseType::IsRational(..) => "rational",
+            InlinedClauseType::IsFloat(..) => "float",
+            InlinedClauseType::IsNonVar(..) => "nonvar",
+            InlinedClauseType::IsVar(..) => "var",
         }
     }
 }
@@ -189,8 +189,8 @@ pub enum SystemClauseType {
     DynamicModuleResolution(usize),
     EnqueueAttributeGoal,
     EnqueueAttributedVar,
-//  ExpandGoal,
-//  ExpandTerm,
+    //  ExpandGoal,
+    //  ExpandTerm,
     FetchGlobalVar,
     FetchGlobalVarWithOffset,
     FirstStream,
@@ -207,16 +207,16 @@ pub enum SystemClauseType {
     GetAttrVarQueueDelimiter,
     GetAttrVarQueueBeyond,
     GetBValue,
-//  GetClause,
+    //  GetClause,
     GetContinuationChunk,
-//  GetModuleClause,
+    //  GetModuleClause,
     GetNextDBRef,
     GetNextOpDBRef,
     IsPartialString,
     LookupDBRef,
     LookupOpDBRef,
     Halt,
-//  ModuleHeadIsDynamic,
+    //  ModuleHeadIsDynamic,
     GetLiftedHeapFromOffset,
     GetLiftedHeapFromOffsetDiff,
     GetSCCCleaner,
@@ -323,259 +323,282 @@ pub enum SystemClauseType {
 
 impl SystemClauseType {
     pub fn name(&self) -> ClauseName {
-        match self {
-            // &SystemClauseType::AbolishClause => clause_name!("$abolish_clause"),
-            // &SystemClauseType::AbolishModuleClause => clause_name!("$abolish_module_clause"),
-            // &SystemClauseType::AssertDynamicPredicateToBack => clause_name!("$assertz"),
-            // &SystemClauseType::AssertDynamicPredicateToFront => clause_name!("$asserta"),
-            // &SystemClauseType::AtEndOfExpansion => clause_name!("$at_end_of_expansion"),
-            &SystemClauseType::AtomChars => clause_name!("$atom_chars"),
-            &SystemClauseType::AtomCodes => clause_name!("$atom_codes"),
-            &SystemClauseType::AtomLength => clause_name!("$atom_length"),
-            &SystemClauseType::BindFromRegister => clause_name!("$bind_from_register"),
-            &SystemClauseType::CallContinuation => clause_name!("$call_continuation"),
-            &SystemClauseType::CharCode => clause_name!("$char_code"),
-            &SystemClauseType::CharType => clause_name!("$char_type"),
-            &SystemClauseType::CharsToNumber => clause_name!("$chars_to_number"),
-            &SystemClauseType::CheckCutPoint => clause_name!("$check_cp"),
-            &SystemClauseType::ClearAttributeGoals => clause_name!("$clear_attribute_goals"),
-            &SystemClauseType::CloneAttributeGoals => clause_name!("$clone_attribute_goals"),
-            &SystemClauseType::CodesToNumber => clause_name!("$codes_to_number"),
-            &SystemClauseType::CopyTermWithoutAttrVars => clause_name!("$copy_term_without_attr_vars"),
-            &SystemClauseType::CreatePartialString => clause_name!("$create_partial_string"),
-            &SystemClauseType::CurrentInput => clause_name!("$current_input"),
-            &SystemClauseType::CurrentHostname => clause_name!("$current_hostname"),
-            &SystemClauseType::CurrentOutput => clause_name!("$current_output"),
-            &SystemClauseType::DirectoryFiles => clause_name!("$directory_files"),
-            &SystemClauseType::FileSize => clause_name!("$file_size"),
-            &SystemClauseType::FileExists => clause_name!("$file_exists"),
-            &SystemClauseType::DirectoryExists => clause_name!("$directory_exists"),
-            &SystemClauseType::DirectorySeparator => clause_name!("$directory_separator"),
-            &SystemClauseType::MakeDirectory => clause_name!("$make_directory"),
-            &SystemClauseType::DeleteFile => clause_name!("$delete_file"),
-            &SystemClauseType::WorkingDirectory => clause_name!("$working_directory"),
-            &SystemClauseType::PathCanonical => clause_name!("$path_canonical"),
-            &SystemClauseType::FileTime => clause_name!("$file_time"),
-            &SystemClauseType::REPL(REPLCodePtr::AddDynamicPredicate) =>
-                clause_name!("$add_dynamic_predicate"),
-            &SystemClauseType::REPL(REPLCodePtr::AddGoalExpansionClause) =>
-                clause_name!("$add_goal_expansion_clause"),
-            &SystemClauseType::REPL(REPLCodePtr::AddTermExpansionClause) =>
-                clause_name!("$add_term_expansion_clause"),
-            &SystemClauseType::REPL(REPLCodePtr::ClauseToEvacuable) =>
-                clause_name!("$clause_to_evacuable"),
-            &SystemClauseType::REPL(REPLCodePtr::ConcludeLoad) =>
-                clause_name!("$conclude_load"),
-            &SystemClauseType::REPL(REPLCodePtr::DeclareModule) =>
-                clause_name!("$declare_module"),
-            &SystemClauseType::REPL(REPLCodePtr::LoadCompiledLibrary) =>
-                clause_name!("$load_compiled_library"),
-            &SystemClauseType::REPL(REPLCodePtr::PushLoadStatePayload) =>
-                clause_name!("$push_load_state_payload"),
-            &SystemClauseType::REPL(REPLCodePtr::UserAsserta) =>
-                clause_name!("$asserta"),
-            &SystemClauseType::REPL(REPLCodePtr::UserAssertz) =>
-                clause_name!("$assertz"),
-            &SystemClauseType::REPL(REPLCodePtr::UserRetract) =>
-                clause_name!("$retract_clause"),
-            &SystemClauseType::REPL(REPLCodePtr::UseModule) =>
-                clause_name!("$use_module"),
-            &SystemClauseType::REPL(REPLCodePtr::PushLoadContext) =>
-                clause_name!("$push_load_context"),
-            &SystemClauseType::REPL(REPLCodePtr::PopLoadContext) =>
-                clause_name!("$pop_load_context"),
-            &SystemClauseType::REPL(REPLCodePtr::PopLoadStatePayload) =>
-                clause_name!("$pop_load_state_payload"),
-            &SystemClauseType::REPL(REPLCodePtr::LoadContextSource) =>
-                clause_name!("$prolog_lc_source"),
-            &SystemClauseType::REPL(REPLCodePtr::LoadContextFile) =>
-                clause_name!("$prolog_lc_file"),
-            &SystemClauseType::REPL(REPLCodePtr::LoadContextDirectory) =>
-                clause_name!("$prolog_lc_dir"),
-            &SystemClauseType::REPL(REPLCodePtr::LoadContextModule) =>
-                clause_name!("$prolog_lc_module"),
-            &SystemClauseType::REPL(REPLCodePtr::LoadContextStream) =>
-                clause_name!("$prolog_lc_stream"),
-            &SystemClauseType::REPL(REPLCodePtr::MetaPredicateProperty) =>
-                clause_name!("$cpp_meta_predicate_property"),
-            &SystemClauseType::REPL(REPLCodePtr::BuiltInProperty) =>
-                clause_name!("$cpp_built_in_property"),
-            &SystemClauseType::REPL(REPLCodePtr::CompilePendingPredicates) =>
-                clause_name!("$compile_pending_predicates"),
-            &SystemClauseType::Close => clause_name!("$close"),
-            &SystemClauseType::CopyToLiftedHeap => clause_name!("$copy_to_lh"),
-            &SystemClauseType::DeleteAttribute => clause_name!("$del_attr_non_head"),
-            &SystemClauseType::DeleteHeadAttribute => clause_name!("$del_attr_head"),
-            &SystemClauseType::DynamicModuleResolution(_) => clause_name!("$module_call"),
-            &SystemClauseType::EnqueueAttributeGoal => clause_name!("$enqueue_attribute_goal"),
-            &SystemClauseType::EnqueueAttributedVar => clause_name!("$enqueue_attr_var"),
-            &SystemClauseType::FetchGlobalVar => clause_name!("$fetch_global_var"),
-            &SystemClauseType::FetchGlobalVarWithOffset =>
-                clause_name!("$fetch_global_var_with_offset"),
-            &SystemClauseType::FirstStream => clause_name!("$first_stream"),
-            &SystemClauseType::FlushOutput => clause_name!("$flush_output"),
-            &SystemClauseType::GetByte => clause_name!("$get_byte"),
-            &SystemClauseType::GetChar => clause_name!("$get_char"),
-            &SystemClauseType::GetNChars => clause_name!("$get_n_chars"),
-            &SystemClauseType::GetCode => clause_name!("$get_code"),
-            &SystemClauseType::GetSingleChar => clause_name!("$get_single_char"),
-            &SystemClauseType::ResetAttrVarState => clause_name!("$reset_attr_var_state"),
-            &SystemClauseType::TruncateIfNoLiftedHeapGrowth => {
+        match *self {
+            // Self::AbolishClause => clause_name!("$abolish_clause"),
+            // Self::AbolishModuleClause => clause_name!("$abolish_module_clause"),
+            // Self::AssertDynamicPredicateToBack => clause_name!("$assertz"),
+            // Self::AssertDynamicPredicateToFront => clause_name!("$asserta"),
+            // Self::AtEndOfExpansion => clause_name!("$at_end_of_expansion"),
+            Self::AtomChars => clause_name!("$atom_chars"),
+            Self::AtomCodes => clause_name!("$atom_codes"),
+            Self::AtomLength => clause_name!("$atom_length"),
+            Self::BindFromRegister => clause_name!("$bind_from_register"),
+            Self::CallContinuation => clause_name!("$call_continuation"),
+            Self::CharCode => clause_name!("$char_code"),
+            Self::CharType => clause_name!("$char_type"),
+            Self::CharsToNumber => clause_name!("$chars_to_number"),
+            Self::CheckCutPoint => clause_name!("$check_cp"),
+            Self::ClearAttributeGoals => clause_name!("$clear_attribute_goals"),
+            Self::CloneAttributeGoals => clause_name!("$clone_attribute_goals"),
+            Self::CodesToNumber => clause_name!("$codes_to_number"),
+            Self::CopyTermWithoutAttrVars => {
+                clause_name!("$copy_term_without_attr_vars")
+            }
+            Self::CreatePartialString => clause_name!("$create_partial_string"),
+            Self::CurrentInput => clause_name!("$current_input"),
+            Self::CurrentHostname => clause_name!("$current_hostname"),
+            Self::CurrentOutput => clause_name!("$current_output"),
+            Self::DirectoryFiles => clause_name!("$directory_files"),
+            Self::FileSize => clause_name!("$file_size"),
+            Self::FileExists => clause_name!("$file_exists"),
+            Self::DirectoryExists => clause_name!("$directory_exists"),
+            Self::DirectorySeparator => clause_name!("$directory_separator"),
+            Self::MakeDirectory => clause_name!("$make_directory"),
+            Self::DeleteFile => clause_name!("$delete_file"),
+            Self::WorkingDirectory => clause_name!("$working_directory"),
+            Self::PathCanonical => clause_name!("$path_canonical"),
+            Self::FileTime => clause_name!("$file_time"),
+            Self::REPL(REPLCodePtr::AddDynamicPredicate) => {
+                clause_name!("$add_dynamic_predicate")
+            }
+            Self::REPL(REPLCodePtr::AddGoalExpansionClause) => {
+                clause_name!("$add_goal_expansion_clause")
+            }
+            Self::REPL(REPLCodePtr::AddTermExpansionClause) => {
+                clause_name!("$add_term_expansion_clause")
+            }
+            Self::REPL(REPLCodePtr::ClauseToEvacuable) => {
+                clause_name!("$clause_to_evacuable")
+            }
+            Self::REPL(REPLCodePtr::ConcludeLoad) => clause_name!("$conclude_load"),
+            Self::REPL(REPLCodePtr::DeclareModule) => clause_name!("$declare_module"),
+            Self::REPL(REPLCodePtr::LoadCompiledLibrary) => {
+                clause_name!("$load_compiled_library")
+            }
+            Self::REPL(REPLCodePtr::PushLoadStatePayload) => {
+                clause_name!("$push_load_state_payload")
+            }
+            Self::REPL(REPLCodePtr::UserAsserta) => clause_name!("$asserta"),
+            Self::REPL(REPLCodePtr::UserAssertz) => clause_name!("$assertz"),
+            Self::REPL(REPLCodePtr::UserRetract) => clause_name!("$retract_clause"),
+            Self::REPL(REPLCodePtr::UseModule) => clause_name!("$use_module"),
+            Self::REPL(REPLCodePtr::PushLoadContext) => {
+                clause_name!("$push_load_context")
+            }
+            Self::REPL(REPLCodePtr::PopLoadContext) => {
+                clause_name!("$pop_load_context")
+            }
+            Self::REPL(REPLCodePtr::PopLoadStatePayload) => {
+                clause_name!("$pop_load_state_payload")
+            }
+            Self::REPL(REPLCodePtr::LoadContextSource) => {
+                clause_name!("$prolog_lc_source")
+            }
+            Self::REPL(REPLCodePtr::LoadContextFile) => {
+                clause_name!("$prolog_lc_file")
+            }
+            Self::REPL(REPLCodePtr::LoadContextDirectory) => {
+                clause_name!("$prolog_lc_dir")
+            }
+            Self::REPL(REPLCodePtr::LoadContextModule) => {
+                clause_name!("$prolog_lc_module")
+            }
+            Self::REPL(REPLCodePtr::LoadContextStream) => {
+                clause_name!("$prolog_lc_stream")
+            }
+            Self::REPL(REPLCodePtr::MetaPredicateProperty) => {
+                clause_name!("$cpp_meta_predicate_property")
+            }
+            Self::REPL(REPLCodePtr::BuiltInProperty) => {
+                clause_name!("$cpp_built_in_property")
+            }
+            Self::REPL(REPLCodePtr::CompilePendingPredicates) => {
+                clause_name!("$compile_pending_predicates")
+            }
+            Self::Close => clause_name!("$close"),
+            Self::CopyToLiftedHeap => clause_name!("$copy_to_lh"),
+            Self::DeleteAttribute => clause_name!("$del_attr_non_head"),
+            Self::DeleteHeadAttribute => clause_name!("$del_attr_head"),
+            Self::DynamicModuleResolution(_) => clause_name!("$module_call"),
+            Self::EnqueueAttributeGoal => clause_name!("$enqueue_attribute_goal"),
+            Self::EnqueueAttributedVar => clause_name!("$enqueue_attr_var"),
+            Self::FetchGlobalVar => clause_name!("$fetch_global_var"),
+            Self::FetchGlobalVarWithOffset => {
+                clause_name!("$fetch_global_var_with_offset")
+            }
+            Self::FirstStream => clause_name!("$first_stream"),
+            Self::FlushOutput => clause_name!("$flush_output"),
+            Self::GetByte => clause_name!("$get_byte"),
+            Self::GetChar => clause_name!("$get_char"),
+            Self::GetNChars => clause_name!("$get_n_chars"),
+            Self::GetCode => clause_name!("$get_code"),
+            Self::GetSingleChar => clause_name!("$get_single_char"),
+            Self::ResetAttrVarState => clause_name!("$reset_attr_var_state"),
+            Self::TruncateIfNoLiftedHeapGrowth => {
                 clause_name!("$truncate_if_no_lh_growth")
             }
-            &SystemClauseType::TruncateIfNoLiftedHeapGrowthDiff => {
+            Self::TruncateIfNoLiftedHeapGrowthDiff => {
                 clause_name!("$truncate_if_no_lh_growth_diff")
             }
-            &SystemClauseType::GetAttributedVariableList => clause_name!("$get_attr_list"),
-            &SystemClauseType::GetAttrVarQueueDelimiter => {
+            Self::GetAttributedVariableList => clause_name!("$get_attr_list"),
+            Self::GetAttrVarQueueDelimiter => {
                 clause_name!("$get_attr_var_queue_delim")
             }
-            &SystemClauseType::GetAttrVarQueueBeyond => clause_name!("$get_attr_var_queue_beyond"),
-            &SystemClauseType::GetContinuationChunk => clause_name!("$get_cont_chunk"),
-            &SystemClauseType::GetLiftedHeapFromOffset => clause_name!("$get_lh_from_offset"),
-            &SystemClauseType::GetLiftedHeapFromOffsetDiff => {
+            Self::GetAttrVarQueueBeyond => clause_name!("$get_attr_var_queue_beyond"),
+            Self::GetContinuationChunk => clause_name!("$get_cont_chunk"),
+            Self::GetLiftedHeapFromOffset => clause_name!("$get_lh_from_offset"),
+            Self::GetLiftedHeapFromOffsetDiff => {
                 clause_name!("$get_lh_from_offset_diff")
             }
-            &SystemClauseType::GetBValue => clause_name!("$get_b_value"),
-//          &SystemClauseType::GetClause => clause_name!("$get_clause"),
-            &SystemClauseType::GetNextDBRef => clause_name!("$get_next_db_ref"),
-            &SystemClauseType::GetNextOpDBRef => clause_name!("$get_next_op_db_ref"),
-            &SystemClauseType::LookupDBRef => clause_name!("$lookup_db_ref"),
-            &SystemClauseType::LookupOpDBRef => clause_name!("$lookup_op_db_ref"),
-            &SystemClauseType::GetDoubleQuotes => clause_name!("$get_double_quotes"),
-//          &SystemClauseType::GetModuleClause => clause_name!("$get_module_clause"),
-            &SystemClauseType::GetSCCCleaner => clause_name!("$get_scc_cleaner"),
-            &SystemClauseType::Halt => clause_name!("$halt"),
-            &SystemClauseType::HeadIsDynamic => clause_name!("$head_is_dynamic"),
-            &SystemClauseType::Open => clause_name!("$open"),
-            &SystemClauseType::OpDeclaration => clause_name!("$op"),
-            &SystemClauseType::InstallSCCCleaner => clause_name!("$install_scc_cleaner"),
-            &SystemClauseType::InstallInferenceCounter => {
+            Self::GetBValue => clause_name!("$get_b_value"),
+            //          Self::GetClause => clause_name!("$get_clause"),
+            Self::GetNextDBRef => clause_name!("$get_next_db_ref"),
+            Self::GetNextOpDBRef => clause_name!("$get_next_op_db_ref"),
+            Self::LookupDBRef => clause_name!("$lookup_db_ref"),
+            Self::LookupOpDBRef => clause_name!("$lookup_op_db_ref"),
+            Self::GetDoubleQuotes => clause_name!("$get_double_quotes"),
+            //          Self::GetModuleClause => clause_name!("$get_module_clause"),
+            Self::GetSCCCleaner => clause_name!("$get_scc_cleaner"),
+            Self::Halt => clause_name!("$halt"),
+            Self::HeadIsDynamic => clause_name!("$head_is_dynamic"),
+            Self::Open => clause_name!("$open"),
+            Self::OpDeclaration => clause_name!("$op"),
+            Self::InstallSCCCleaner => clause_name!("$install_scc_cleaner"),
+            Self::InstallInferenceCounter => {
                 clause_name!("$install_inference_counter")
             }
-            &SystemClauseType::IsPartialString => clause_name!("$is_partial_string"),
-            &SystemClauseType::PartialStringTail => clause_name!("$partial_string_tail"),
-            &SystemClauseType::PeekByte => clause_name!("$peek_byte"),
-            &SystemClauseType::PeekChar => clause_name!("$peek_char"),
-            &SystemClauseType::PeekCode => clause_name!("$peek_code"),
-            &SystemClauseType::LiftedHeapLength => clause_name!("$lh_length"),
-            &SystemClauseType::Maybe => clause_name!("maybe"),
-            &SystemClauseType::CpuNow => clause_name!("$cpu_now"),
-            &SystemClauseType::CurrentTime => clause_name!("$current_time"),
-            // &SystemClauseType::ModuleAssertDynamicPredicateToFront => {
+            Self::IsPartialString => clause_name!("$is_partial_string"),
+            Self::PartialStringTail => clause_name!("$partial_string_tail"),
+            Self::PeekByte => clause_name!("$peek_byte"),
+            Self::PeekChar => clause_name!("$peek_char"),
+            Self::PeekCode => clause_name!("$peek_code"),
+            Self::LiftedHeapLength => clause_name!("$lh_length"),
+            Self::Maybe => clause_name!("maybe"),
+            Self::CpuNow => clause_name!("$cpu_now"),
+            Self::CurrentTime => clause_name!("$current_time"),
+            // Self::ModuleAssertDynamicPredicateToFront => {
             //     clause_name!("$module_asserta")
             // }
-            // &SystemClauseType::ModuleAssertDynamicPredicateToBack => {
+            // Self::ModuleAssertDynamicPredicateToBack => {
             //     clause_name!("$module_assertz")
             // }
-//          &SystemClauseType::ModuleHeadIsDynamic => clause_name!("$module_head_is_dynamic"),
-            &SystemClauseType::ModuleExists => clause_name!("$module_exists"),
-            &SystemClauseType::NextStream => clause_name!("$next_stream"),
-            &SystemClauseType::NoSuchPredicate => clause_name!("$no_such_predicate"),
-            &SystemClauseType::NumberToChars => clause_name!("$number_to_chars"),
-            &SystemClauseType::NumberToCodes => clause_name!("$number_to_codes"),
-            &SystemClauseType::PointsToContinuationResetMarker => {
+            //          Self::ModuleHeadIsDynamic => clause_name!("$module_head_is_dynamic"),
+            Self::ModuleExists => clause_name!("$module_exists"),
+            Self::NextStream => clause_name!("$next_stream"),
+            Self::NoSuchPredicate => clause_name!("$no_such_predicate"),
+            Self::NumberToChars => clause_name!("$number_to_chars"),
+            Self::NumberToCodes => clause_name!("$number_to_codes"),
+            Self::PointsToContinuationResetMarker => {
                 clause_name!("$points_to_cont_reset_marker")
             }
-            &SystemClauseType::PutByte => {
+            Self::PutByte => {
                 clause_name!("$put_byte")
             }
-            &SystemClauseType::PutChar => {
+            Self::PutChar => {
                 clause_name!("$put_char")
             }
-            &SystemClauseType::PutChars => {
+            Self::PutChars => {
                 clause_name!("$put_chars")
             }
-            &SystemClauseType::PutCode => {
+            Self::PutCode => {
                 clause_name!("$put_code")
             }
-            &SystemClauseType::QuotedToken => {
+            Self::QuotedToken => {
                 clause_name!("$quoted_token")
             }
-            &SystemClauseType::RedoAttrVarBinding => clause_name!("$redo_attr_var_binding"),
-            &SystemClauseType::RemoveCallPolicyCheck => clause_name!("$remove_call_policy_check"),
-            &SystemClauseType::RemoveInferenceCounter => clause_name!("$remove_inference_counter"),
-            &SystemClauseType::RestoreCutPolicy => clause_name!("$restore_cut_policy"),
-            &SystemClauseType::SetCutPoint(_) => clause_name!("$set_cp"),
-            &SystemClauseType::SetInput => clause_name!("$set_input"),
-            &SystemClauseType::SetOutput => clause_name!("$set_output"),
-            &SystemClauseType::SetSeed => clause_name!("$set_seed"),
-            &SystemClauseType::StreamProperty => clause_name!("$stream_property"),
-            &SystemClauseType::SetStreamPosition => clause_name!("$set_stream_position"),
-            &SystemClauseType::StoreGlobalVar => clause_name!("$store_global_var"),
-            &SystemClauseType::StoreGlobalVarWithOffset => {
+            Self::RedoAttrVarBinding => clause_name!("$redo_attr_var_binding"),
+            Self::RemoveCallPolicyCheck => clause_name!("$remove_call_policy_check"),
+            Self::RemoveInferenceCounter => clause_name!("$remove_inference_counter"),
+            Self::RestoreCutPolicy => clause_name!("$restore_cut_policy"),
+            Self::SetCutPoint(_) => clause_name!("$set_cp"),
+            Self::SetInput => clause_name!("$set_input"),
+            Self::SetOutput => clause_name!("$set_output"),
+            Self::SetSeed => clause_name!("$set_seed"),
+            Self::StreamProperty => clause_name!("$stream_property"),
+            Self::SetStreamPosition => clause_name!("$set_stream_position"),
+            Self::StoreGlobalVar => clause_name!("$store_global_var"),
+            Self::StoreGlobalVarWithOffset => {
                 clause_name!("$store_global_var_with_offset")
             }
-            &SystemClauseType::InferenceLevel => clause_name!("$inference_level"),
-            &SystemClauseType::CleanUpBlock => clause_name!("$clean_up_block"),
-            &SystemClauseType::EraseBall => clause_name!("$erase_ball"),
-            &SystemClauseType::Fail => clause_name!("$fail"),
-            &SystemClauseType::GetBall => clause_name!("$get_ball"),
-            &SystemClauseType::GetCutPoint => clause_name!("$get_cp"),
-            &SystemClauseType::GetCurrentBlock => clause_name!("$get_current_block"),
-            &SystemClauseType::InstallNewBlock => clause_name!("$install_new_block"),
-            // &SystemClauseType::ModuleRetractClause => clause_name!("$module_retract_clause"),
-            &SystemClauseType::NextEP => clause_name!("$nextEP"),
-            &SystemClauseType::ReadQueryTerm => clause_name!("$read_query_term"),
-            &SystemClauseType::ReadTerm => clause_name!("$read_term"),
-            &SystemClauseType::ReadTermFromChars => clause_name!("$read_term_from_chars"),
-            &SystemClauseType::ResetGlobalVarAtKey => clause_name!("$reset_global_var_at_key"),
-            &SystemClauseType::ResetGlobalVarAtOffset => clause_name!("$reset_global_var_at_offset"),
-            &SystemClauseType::ResetBlock => clause_name!("$reset_block"),
-            &SystemClauseType::ResetContinuationMarker => clause_name!("$reset_cont_marker"),
-            &SystemClauseType::ReturnFromVerifyAttr => clause_name!("$return_from_verify_attr"),
-            &SystemClauseType::SetBall => clause_name!("$set_ball"),
-            &SystemClauseType::SetCutPointByDefault(_) => clause_name!("$set_cp_by_default"),
-            &SystemClauseType::SetDoubleQuotes => clause_name!("$set_double_quotes"),
-            &SystemClauseType::SkipMaxList => clause_name!("$skip_max_list"),
-            &SystemClauseType::Sleep => clause_name!("$sleep"),
-            &SystemClauseType::SocketClientOpen => clause_name!("$socket_client_open"),
-            &SystemClauseType::SocketServerOpen => clause_name!("$socket_server_open"),
-            &SystemClauseType::SocketServerAccept => clause_name!("$socket_server_accept"),
-            &SystemClauseType::SocketServerClose => clause_name!("$socket_server_close"),
-            &SystemClauseType::Succeed => clause_name!("$succeed"),
-            &SystemClauseType::TermAttributedVariables => clause_name!("$term_attributed_variables"),
-            &SystemClauseType::TermVariables => clause_name!("$term_variables"),
-            &SystemClauseType::TruncateLiftedHeapTo => clause_name!("$truncate_lh_to"),
-            &SystemClauseType::UnifyWithOccursCheck => clause_name!("$unify_with_occurs_check"),
-            &SystemClauseType::UnwindEnvironments => clause_name!("$unwind_environments"),
-            &SystemClauseType::UnwindStack => clause_name!("$unwind_stack"),
-            &SystemClauseType::Variant => clause_name!("$variant"),
-            &SystemClauseType::WAMInstructions => clause_name!("$wam_instructions"),
-            &SystemClauseType::WriteTerm => clause_name!("$write_term"),
-            &SystemClauseType::WriteTermToChars => clause_name!("$write_term_to_chars"),
-            &SystemClauseType::ScryerPrologVersion => clause_name!("$scryer_prolog_version"),
-            &SystemClauseType::CryptoRandomByte => clause_name!("$crypto_random_byte"),
-            &SystemClauseType::CryptoDataHash => clause_name!("$crypto_data_hash"),
-            &SystemClauseType::CryptoDataHKDF => clause_name!("$crypto_data_hkdf"),
-            &SystemClauseType::CryptoPasswordHash => clause_name!("$crypto_password_hash"),
-            &SystemClauseType::CryptoDataEncrypt => clause_name!("$crypto_data_encrypt"),
-            &SystemClauseType::CryptoDataDecrypt => clause_name!("$crypto_data_decrypt"),
-            &SystemClauseType::CryptoCurveScalarMult => clause_name!("$crypto_curve_scalar_mult"),
-            &SystemClauseType::Ed25519Sign => clause_name!("$ed25519_sign"),
-            &SystemClauseType::Ed25519Verify => clause_name!("$ed25519_verify"),
-            &SystemClauseType::Ed25519NewKeyPair => clause_name!("$ed25519_new_keypair"),
-            &SystemClauseType::Ed25519KeyPairPublicKey => clause_name!("$ed25519_keypair_public_key"),
-            &SystemClauseType::Curve25519ScalarMult => clause_name!("$curve25519_scalar_mult"),
-            &SystemClauseType::LoadHTML => clause_name!("$load_html"),
-            &SystemClauseType::LoadXML => clause_name!("$load_xml"),
-            &SystemClauseType::GetEnv => clause_name!("$getenv"),
-            &SystemClauseType::SetEnv => clause_name!("$setenv"),
-            &SystemClauseType::UnsetEnv => clause_name!("$unsetenv"),
-            &SystemClauseType::CharsBase64 => clause_name!("$chars_base64"),
-            &SystemClauseType::LoadLibraryAsStream => clause_name!("$load_library_as_stream"),
+            Self::InferenceLevel => clause_name!("$inference_level"),
+            Self::CleanUpBlock => clause_name!("$clean_up_block"),
+            Self::EraseBall => clause_name!("$erase_ball"),
+            Self::Fail => clause_name!("$fail"),
+            Self::GetBall => clause_name!("$get_ball"),
+            Self::GetCutPoint => clause_name!("$get_cp"),
+            Self::GetCurrentBlock => clause_name!("$get_current_block"),
+            Self::InstallNewBlock => clause_name!("$install_new_block"),
+            // Self::ModuleRetractClause => clause_name!("$module_retract_clause"),
+            Self::NextEP => clause_name!("$nextEP"),
+            Self::ReadQueryTerm => clause_name!("$read_query_term"),
+            Self::ReadTerm => clause_name!("$read_term"),
+            Self::ReadTermFromChars => clause_name!("$read_term_from_chars"),
+            Self::ResetGlobalVarAtKey => clause_name!("$reset_global_var_at_key"),
+            Self::ResetGlobalVarAtOffset => {
+                clause_name!("$reset_global_var_at_offset")
+            }
+            Self::ResetBlock => clause_name!("$reset_block"),
+            Self::ResetContinuationMarker => clause_name!("$reset_cont_marker"),
+            Self::ReturnFromVerifyAttr => clause_name!("$return_from_verify_attr"),
+            Self::SetBall => clause_name!("$set_ball"),
+            Self::SetCutPointByDefault(_) => clause_name!("$set_cp_by_default"),
+            Self::SetDoubleQuotes => clause_name!("$set_double_quotes"),
+            Self::SkipMaxList => clause_name!("$skip_max_list"),
+            Self::Sleep => clause_name!("$sleep"),
+            Self::SocketClientOpen => clause_name!("$socket_client_open"),
+            Self::SocketServerOpen => clause_name!("$socket_server_open"),
+            Self::SocketServerAccept => clause_name!("$socket_server_accept"),
+            Self::SocketServerClose => clause_name!("$socket_server_close"),
+            Self::Succeed => clause_name!("$succeed"),
+            Self::TermAttributedVariables => {
+                clause_name!("$term_attributed_variables")
+            }
+            Self::TermVariables => clause_name!("$term_variables"),
+            Self::TruncateLiftedHeapTo => clause_name!("$truncate_lh_to"),
+            Self::UnifyWithOccursCheck => clause_name!("$unify_with_occurs_check"),
+            Self::UnwindEnvironments => clause_name!("$unwind_environments"),
+            Self::UnwindStack => clause_name!("$unwind_stack"),
+            Self::Variant => clause_name!("$variant"),
+            Self::WAMInstructions => clause_name!("$wam_instructions"),
+            Self::WriteTerm => clause_name!("$write_term"),
+            Self::WriteTermToChars => clause_name!("$write_term_to_chars"),
+            Self::ScryerPrologVersion => clause_name!("$scryer_prolog_version"),
+            Self::CryptoRandomByte => clause_name!("$crypto_random_byte"),
+            Self::CryptoDataHash => clause_name!("$crypto_data_hash"),
+            Self::CryptoDataHKDF => clause_name!("$crypto_data_hkdf"),
+            Self::CryptoPasswordHash => clause_name!("$crypto_password_hash"),
+            Self::CryptoDataEncrypt => clause_name!("$crypto_data_encrypt"),
+            Self::CryptoDataDecrypt => clause_name!("$crypto_data_decrypt"),
+            Self::CryptoCurveScalarMult => clause_name!("$crypto_curve_scalar_mult"),
+            Self::Ed25519Sign => clause_name!("$ed25519_sign"),
+            Self::Ed25519Verify => clause_name!("$ed25519_verify"),
+            Self::Ed25519NewKeyPair => clause_name!("$ed25519_new_keypair"),
+            Self::Ed25519KeyPairPublicKey => {
+                clause_name!("$ed25519_keypair_public_key")
+            }
+            Self::Curve25519ScalarMult => clause_name!("$curve25519_scalar_mult"),
+            Self::LoadHTML => clause_name!("$load_html"),
+            Self::LoadXML => clause_name!("$load_xml"),
+            Self::GetEnv => clause_name!("$getenv"),
+            Self::SetEnv => clause_name!("$setenv"),
+            Self::UnsetEnv => clause_name!("$unsetenv"),
+            Self::CharsBase64 => clause_name!("$chars_base64"),
+            Self::LoadLibraryAsStream => clause_name!("$load_library_as_stream"),
         }
     }
 
     pub fn from(name: &str, arity: usize) -> Option<SystemClauseType> {
         match (name, arity) {
             // ("$abolish_clause", 2) => Some(SystemClauseType::AbolishClause),
-            ("$add_dynamic_predicate", 3) =>
-                Some(SystemClauseType::REPL(REPLCodePtr::AddDynamicPredicate)),
-            ("$add_goal_expansion_clause", 4) =>
-                Some(SystemClauseType::REPL(REPLCodePtr::AddGoalExpansionClause)),
-            ("$add_term_expansion_clause", 3) =>
-                Some(SystemClauseType::REPL(REPLCodePtr::AddTermExpansionClause)),
+            ("$add_dynamic_predicate", 3) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::AddDynamicPredicate))
+            }
+            ("$add_goal_expansion_clause", 4) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::AddGoalExpansionClause))
+            }
+            ("$add_term_expansion_clause", 3) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::AddTermExpansionClause))
+            }
             // ("$at_end_of_expansion", 0) => Some(SystemClauseType::AtEndOfExpansion),
             ("$atom_chars", 2) => Some(SystemClauseType::AtomChars),
             ("$atom_codes", 2) => Some(SystemClauseType::AtomCodes),
@@ -616,10 +639,12 @@ impl SystemClauseType {
             ("$peek_char", 2) => Some(SystemClauseType::PeekChar),
             ("$peek_code", 2) => Some(SystemClauseType::PeekCode),
             ("$is_partial_string", 1) => Some(SystemClauseType::IsPartialString),
-//          ("$expand_term", 2) => Some(SystemClauseType::ExpandTerm),
-//          ("$expand_goal", 2) => Some(SystemClauseType::ExpandGoal),
+            //          ("$expand_term", 2) => Some(SystemClauseType::ExpandTerm),
+            //          ("$expand_goal", 2) => Some(SystemClauseType::ExpandGoal),
             ("$fetch_global_var", 2) => Some(SystemClauseType::FetchGlobalVar),
-            ("$fetch_global_var_with_offset", 3) => Some(SystemClauseType::FetchGlobalVarWithOffset),
+            ("$fetch_global_var_with_offset", 3) => {
+                Some(SystemClauseType::FetchGlobalVarWithOffset)
+            }
             ("$get_byte", 2) => Some(SystemClauseType::GetByte),
             ("$get_char", 2) => Some(SystemClauseType::GetChar),
             ("$get_n_chars", 3) => Some(SystemClauseType::GetNChars),
@@ -628,18 +653,10 @@ impl SystemClauseType {
             ("$points_to_cont_reset_marker", 1) => {
                 Some(SystemClauseType::PointsToContinuationResetMarker)
             }
-            ("$put_byte", 2) => {
-                Some(SystemClauseType::PutByte)
-            }
-            ("$put_char", 2) => {
-                Some(SystemClauseType::PutChar)
-            }
-            ("$put_chars", 2) => {
-                Some(SystemClauseType::PutChars)
-            }
-            ("$put_code", 2) => {
-                Some(SystemClauseType::PutCode)
-            }
+            ("$put_byte", 2) => Some(SystemClauseType::PutByte),
+            ("$put_char", 2) => Some(SystemClauseType::PutChar),
+            ("$put_chars", 2) => Some(SystemClauseType::PutChars),
+            ("$put_code", 2) => Some(SystemClauseType::PutCode),
             ("$reset_attr_var_state", 0) => Some(SystemClauseType::ResetAttrVarState),
             ("$truncate_if_no_lh_growth", 1) => {
                 Some(SystemClauseType::TruncateIfNoLiftedHeapGrowth)
@@ -649,8 +666,8 @@ impl SystemClauseType {
             }
             ("$get_attr_list", 2) => Some(SystemClauseType::GetAttributedVariableList),
             ("$get_b_value", 1) => Some(SystemClauseType::GetBValue),
-//          ("$get_clause", 2) => Some(SystemClauseType::GetClause),
-//          ("$get_module_clause", 3) => Some(SystemClauseType::GetModuleClause),
+            //          ("$get_clause", 2) => Some(SystemClauseType::GetClause),
+            //          ("$get_module_clause", 3) => Some(SystemClauseType::GetModuleClause),
             ("$get_lh_from_offset", 2) => Some(SystemClauseType::GetLiftedHeapFromOffset),
             ("$get_lh_from_offset_diff", 3) => Some(SystemClauseType::GetLiftedHeapFromOffsetDiff),
             ("$get_double_quotes", 1) => Some(SystemClauseType::GetDoubleQuotes),
@@ -713,7 +730,9 @@ impl SystemClauseType {
             ("$socket_server_accept", 7) => Some(SystemClauseType::SocketServerAccept),
             ("$socket_server_close", 1) => Some(SystemClauseType::SocketServerClose),
             ("$store_global_var", 2) => Some(SystemClauseType::StoreGlobalVar),
-            ("$store_global_var_with_offset", 2) => Some(SystemClauseType::StoreGlobalVarWithOffset),
+            ("$store_global_var_with_offset", 2) => {
+                Some(SystemClauseType::StoreGlobalVarWithOffset)
+            }
             ("$term_attributed_variables", 2) => Some(SystemClauseType::TermAttributedVariables),
             ("$term_variables", 2) => Some(SystemClauseType::TermVariables),
             ("$truncate_lh_to", 1) => Some(SystemClauseType::TruncateLiftedHeapTo),
@@ -730,12 +749,18 @@ impl SystemClauseType {
             ("$working_directory", 2) => Some(SystemClauseType::WorkingDirectory),
             ("$path_canonical", 2) => Some(SystemClauseType::PathCanonical),
             ("$file_time", 3) => Some(SystemClauseType::FileTime),
-            ("$clause_to_evacuable", 3) => Some(SystemClauseType::REPL(REPLCodePtr::ClauseToEvacuable)),
+            ("$clause_to_evacuable", 3) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::ClauseToEvacuable))
+            }
             ("$conclude_load", 1) => Some(SystemClauseType::REPL(REPLCodePtr::ConcludeLoad)),
             ("$use_module", 3) => Some(SystemClauseType::REPL(REPLCodePtr::UseModule)),
             ("$declare_module", 3) => Some(SystemClauseType::REPL(REPLCodePtr::DeclareModule)),
-            ("$load_compiled_library", 2) => Some(SystemClauseType::REPL(REPLCodePtr::LoadCompiledLibrary)),
-            ("$push_load_state_payload", 1) => Some(SystemClauseType::REPL(REPLCodePtr::PushLoadStatePayload)),
+            ("$load_compiled_library", 2) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::LoadCompiledLibrary))
+            }
+            ("$push_load_state_payload", 1) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::PushLoadStatePayload))
+            }
             ("$asserta", 4) => Some(SystemClauseType::REPL(REPLCodePtr::UserAsserta)),
             ("$assertz", 4) => Some(SystemClauseType::REPL(REPLCodePtr::UserAssertz)),
             ("$retract_clause", 3) => Some(SystemClauseType::REPL(REPLCodePtr::UserRetract)),
@@ -764,16 +789,32 @@ impl SystemClauseType {
             ("$chars_base64", 4) => Some(SystemClauseType::CharsBase64),
             ("$load_library_as_stream", 3) => Some(SystemClauseType::LoadLibraryAsStream),
             ("$push_load_context", 2) => Some(SystemClauseType::REPL(REPLCodePtr::PushLoadContext)),
-            ("$pop_load_state_payload", 1) => Some(SystemClauseType::REPL(REPLCodePtr::PopLoadStatePayload)),
+            ("$pop_load_state_payload", 1) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::PopLoadStatePayload))
+            }
             ("$pop_load_context", 0) => Some(SystemClauseType::REPL(REPLCodePtr::PopLoadContext)),
-            ("$prolog_lc_source", 1) => Some(SystemClauseType::REPL(REPLCodePtr::LoadContextSource)),
+            ("$prolog_lc_source", 1) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::LoadContextSource))
+            }
             ("$prolog_lc_file", 1) => Some(SystemClauseType::REPL(REPLCodePtr::LoadContextFile)),
-            ("$prolog_lc_dir", 1) => Some(SystemClauseType::REPL(REPLCodePtr::LoadContextDirectory)),
-            ("$prolog_lc_module", 1) => Some(SystemClauseType::REPL(REPLCodePtr::LoadContextModule)),
-            ("$prolog_lc_stream", 1) => Some(SystemClauseType::REPL(REPLCodePtr::LoadContextStream)),
-            ("$cpp_meta_predicate_property", 4) => Some(SystemClauseType::REPL(REPLCodePtr::MetaPredicateProperty)),
-            ("$cpp_built_in_property", 2) => Some(SystemClauseType::REPL(REPLCodePtr::BuiltInProperty)),
-            ("$compile_pending_predicates", 1) => Some(SystemClauseType::REPL(REPLCodePtr::CompilePendingPredicates)),
+            ("$prolog_lc_dir", 1) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::LoadContextDirectory))
+            }
+            ("$prolog_lc_module", 1) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::LoadContextModule))
+            }
+            ("$prolog_lc_stream", 1) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::LoadContextStream))
+            }
+            ("$cpp_meta_predicate_property", 4) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::MetaPredicateProperty))
+            }
+            ("$cpp_built_in_property", 2) => {
+                Some(SystemClauseType::REPL(REPLCodePtr::BuiltInProperty))
+            }
+            ("$compile_pending_predicates", 1) => Some(SystemClauseType::REPL(
+                REPLCodePtr::CompilePendingPredicates,
+            )),
             _ => None,
         }
     }
@@ -809,65 +850,65 @@ pub enum ClauseType {
 
 impl BuiltInClauseType {
     pub fn name(&self) -> ClauseName {
-        match self {
-            &BuiltInClauseType::AcyclicTerm => clause_name!("acyclic_term"),
-            &BuiltInClauseType::Arg => clause_name!("arg"),
-            &BuiltInClauseType::Compare => clause_name!("compare"),
-            &BuiltInClauseType::CompareTerm(qt) => clause_name!(qt.name()),
-            &BuiltInClauseType::CopyTerm => clause_name!("copy_term"),
-            &BuiltInClauseType::Eq => clause_name!("=="),
-            &BuiltInClauseType::Functor => clause_name!("functor"),
-            &BuiltInClauseType::Ground => clause_name!("ground"),
-            &BuiltInClauseType::Is(..) => clause_name!("is"),
-            &BuiltInClauseType::KeySort => clause_name!("keysort"),
-            &BuiltInClauseType::Nl => clause_name!("nl"),
-            &BuiltInClauseType::NotEq => clause_name!("\\=="),
-            &BuiltInClauseType::Read => clause_name!("read"),
-            &BuiltInClauseType::Sort => clause_name!("sort"),
+        match *self {
+            Self::AcyclicTerm => clause_name!("acyclic_term"),
+            Self::Arg => clause_name!("arg"),
+            Self::Compare => clause_name!("compare"),
+            Self::CompareTerm(qt) => clause_name!(qt.name()),
+            Self::CopyTerm => clause_name!("copy_term"),
+            Self::Eq => clause_name!("=="),
+            Self::Functor => clause_name!("functor"),
+            Self::Ground => clause_name!("ground"),
+            Self::Is(..) => clause_name!("is"),
+            Self::KeySort => clause_name!("keysort"),
+            Self::Nl => clause_name!("nl"),
+            Self::NotEq => clause_name!("\\=="),
+            Self::Read => clause_name!("read"),
+            Self::Sort => clause_name!("sort"),
         }
     }
 
     pub fn arity(&self) -> usize {
-        match self {
-            &BuiltInClauseType::AcyclicTerm => 1,
-            &BuiltInClauseType::Arg => 3,
-            &BuiltInClauseType::Compare => 2,
-            &BuiltInClauseType::CompareTerm(_) => 2,
-            &BuiltInClauseType::CopyTerm => 2,
-            &BuiltInClauseType::Eq => 2,
-            &BuiltInClauseType::Functor => 3,
-            &BuiltInClauseType::Ground => 1,
-            &BuiltInClauseType::Is(..) => 2,
-            &BuiltInClauseType::KeySort => 2,
-            &BuiltInClauseType::NotEq => 2,
-            &BuiltInClauseType::Nl => 0,
-            &BuiltInClauseType::Read => 1,
-            &BuiltInClauseType::Sort => 2,
+        match *self {
+            Self::AcyclicTerm => 1,
+            Self::Arg => 3,
+            Self::Compare => 2,
+            Self::CompareTerm(_) => 2,
+            Self::CopyTerm => 2,
+            Self::Eq => 2,
+            Self::Functor => 3,
+            Self::Ground => 1,
+            Self::Is(..) => 2,
+            Self::KeySort => 2,
+            Self::NotEq => 2,
+            Self::Nl => 0,
+            Self::Read => 1,
+            Self::Sort => 2,
         }
     }
 }
 
 impl ClauseType {
     pub fn spec(&self) -> Option<SharedOpDesc> {
-        match self {
-            &ClauseType::Op(_, ref spec, _) => Some(spec.clone()),
-            &ClauseType::Inlined(InlinedClauseType::CompareNumber(..))
-          | &ClauseType::BuiltIn(BuiltInClauseType::Is(..))
-          | &ClauseType::BuiltIn(BuiltInClauseType::CompareTerm(_))
-          | &ClauseType::BuiltIn(BuiltInClauseType::NotEq)
-          | &ClauseType::BuiltIn(BuiltInClauseType::Eq) => Some(SharedOpDesc::new(700, XFX)),
+        match *self {
+            Self::Op(_, ref spec, _) => Some(spec.clone()),
+            Self::Inlined(InlinedClauseType::CompareNumber(..))
+            | Self::BuiltIn(BuiltInClauseType::Is(..))
+            | Self::BuiltIn(BuiltInClauseType::CompareTerm(_))
+            | Self::BuiltIn(BuiltInClauseType::NotEq)
+            | Self::BuiltIn(BuiltInClauseType::Eq) => Some(SharedOpDesc::new(700, XFX)),
             _ => None,
         }
     }
 
     pub fn name(&self) -> ClauseName {
-        match self {
-            &ClauseType::BuiltIn(ref built_in) => built_in.name(),
-            &ClauseType::CallN => clause_name!("call"),
-            &ClauseType::Inlined(ref inlined) => clause_name!(inlined.name()),
-            &ClauseType::Op(ref name, ..) => name.clone(),
-            &ClauseType::Named(ref name, ..) => name.clone(),
-            &ClauseType::System(ref system) => system.name(),
+        match *self {
+            Self::BuiltIn(ref built_in) => built_in.name(),
+            Self::CallN => clause_name!("call"),
+            Self::Inlined(ref inlined) => clause_name!(inlined.name()),
+            Self::Op(ref name, ..) => name.clone(),
+            Self::Named(ref name, ..) => name.clone(),
+            Self::System(ref system) => system.name(),
         }
     }
 

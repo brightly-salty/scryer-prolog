@@ -14,8 +14,13 @@ pub trait Allocator<'a> {
     fn mark_anon_var<Target>(&mut self, _: Level, _: GenContext, _: &mut Vec<Target>)
     where
         Target: CompilationTarget<'a>;
-    fn mark_non_var<Target>(&mut self, _: Level, _: GenContext, _: &'a Cell<RegType>, _: &mut Vec<Target>)
-    where
+    fn mark_non_var<Target>(
+        &mut self,
+        _: Level,
+        _: GenContext,
+        _: &'a Cell<RegType>,
+        _: &mut Vec<Target>,
+    ) where
         Target: CompilationTarget<'a>;
     fn mark_reserved_var<Target>(
         &mut self,
@@ -28,14 +33,20 @@ pub trait Allocator<'a> {
         _: bool,
     ) where
         Target: CompilationTarget<'a>;
-    fn mark_var<Target>(&mut self, _: Rc<Var>, _: Level, _: &'a Cell<VarReg>, _: GenContext, _: &mut Vec<Target>)
-    where
+    fn mark_var<Target>(
+        &mut self,
+        _: Rc<Var>,
+        _: Level,
+        _: &'a Cell<VarReg>,
+        _: GenContext,
+        _: &mut Vec<Target>,
+    ) where
         Target: CompilationTarget<'a>;
 
     fn reset(&mut self);
     fn reset_contents(&mut self) {}
     fn reset_arg(&mut self, _: usize);
-    fn reset_at_head(&mut self, _: &Vec<Box<Term>>);
+    fn reset_at_head(&mut self, _: &[Term]);
 
     fn advance_arg(&mut self);
 
@@ -47,7 +58,7 @@ pub trait Allocator<'a> {
     fn drain_var_data(
         &mut self,
         vs: VariableFixtures<'a>,
-        num_of_chunks: usize
+        num_of_chunks: usize,
     ) -> VariableFixtures<'a> {
         let mut perm_vs = VariableFixtures::new();
 
@@ -82,9 +93,9 @@ pub trait Allocator<'a> {
     }
 
     fn record_register(&mut self, var: Rc<Var>, r: RegType) {
-        match self.bindings_mut().get_mut(&var).unwrap() {
-            &mut VarData::Temp(_, ref mut s, _) => *s = r.reg_num(),
-            &mut VarData::Perm(ref mut s) => *s = r.reg_num(),
+        match *self.bindings_mut().get_mut(&var).unwrap() {
+            VarData::Temp(_, ref mut s, _) => *s = r.reg_num(),
+            VarData::Perm(ref mut s) => *s = r.reg_num(),
         }
     }
 }
