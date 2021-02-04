@@ -1,10 +1,12 @@
-use crate::prolog_parser_rebis::ast::*;
-use crate::prolog_parser_rebis::parser::*;
+use crate::prolog_parser_rebis::ast::{
+    parsing_stream, Atom, CompositeOpDir, OpDir, ParserError, ParsingStream, Term,
+};
+use crate::prolog_parser_rebis::parser::Parser;
 use crate::prolog_parser_rebis::tabled_rc::TabledData;
 
-use crate::forms::*;
-use crate::iterators::*;
-use crate::machine::machine_indices::*;
+use crate::forms::Level;
+use crate::iterators::{breadth_first_iter, TermRef};
+use crate::machine::machine_indices::{Addr, HeapCellValue, HeapVarDict};
 use crate::machine::machine_state::MachineState;
 use crate::machine::streams::Stream;
 
@@ -123,7 +125,7 @@ pub mod readline {
                         Ok(0) => {
                             return Err(Error::new(ErrorKind::UnexpectedEof, "end of file"));
                         }
-                        _ => {}
+                        Ok(_) => {}
                     },
                 }
             }
@@ -144,7 +146,7 @@ pub mod readline {
                         Ok(0) => {
                             return Err(Error::new(ErrorKind::UnexpectedEof, "end of file"));
                         }
-                        _ => {}
+                        Ok(_) => {}
                     },
                 }
             }
@@ -241,8 +243,7 @@ impl<'a> TermWriter<'a> {
 
     fn term_as_addr(&mut self, term: &TermRef<'a>, h: usize) -> Addr {
         match term {
-            &TermRef::AnonVar(_) | &TermRef::Var(..) => Addr::HeapCell(h),
-            &TermRef::Cons(..) => Addr::HeapCell(h),
+            &TermRef::AnonVar(_) | &TermRef::Var(..) | &TermRef::Cons(..) => Addr::HeapCell(h),
             &TermRef::Constant(_, _, c) => self.machine_st.heap.put_constant(c.clone()),
             &TermRef::Clause(..) => Addr::Str(h),
             &TermRef::PartialString(..) => Addr::PStrLocation(h, 0),

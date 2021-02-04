@@ -1,11 +1,14 @@
+use crate::clause_types::ClauseType;
 use crate::prolog_parser_rebis::ast::*;
 use crate::prolog_parser_rebis::tabled_rc::*;
 
-use crate::forms::*;
-use crate::iterators::*;
-use crate::machine::load_state::*;
-use crate::machine::machine_errors::*;
-use crate::machine::*;
+use crate::forms::{
+    Declaration, JumpStub, MetaSpec, ModuleDecl, ModuleExport, ModuleSource, OpDecl,
+    PredicateClause, PredicateKey, QueryTerm, Rule, TopLevel,
+};
+use crate::iterators::{post_order_iter, TermRef};
+use crate::machine::load_state::LoadState;
+use crate::machine::machine_errors::CompilationError;
 
 use crate::indexmap::IndexSet;
 
@@ -98,7 +101,7 @@ fn setup_predicate_indicator(term: &mut Term) -> Result<PredicateKey, Compilatio
 
             let name = name
                 .into_constant()
-                .and_then(|c| c.into_atom())
+                .and_then(prolog_parser_rebis::ast::Constant::into_atom)
                 .ok_or(CompilationError::InvalidModuleExport)?;
 
             if slash.as_str() == "/" {
@@ -167,10 +170,10 @@ pub(super) fn setup_module_export_list(
         export_list = *t2;
     }
 
-    if export_list.into_constant() != Some(Constant::EmptyList) {
-        Err(CompilationError::InvalidModuleDecl)
-    } else {
+    if export_list.into_constant() == Some(Constant::EmptyList) {
         Ok(exports)
+    } else {
+        Err(CompilationError::InvalidModuleDecl)
     }
 }
 
@@ -183,7 +186,7 @@ fn setup_module_decl(
         .pop()
         .unwrap()
         .into_constant()
-        .and_then(|c| c.into_atom())
+        .and_then(Constant::into_atom)
         .ok_or(CompilationError::InvalidModuleDecl)?;
 
     let exports = setup_module_export_list(export_list, atom_tbl)?;
@@ -199,7 +202,7 @@ fn setup_use_module_decl(mut terms: Vec<Term>) -> Result<ModuleSource, Compilati
                 .pop()
                 .unwrap()
                 .into_constant()
-                .and_then(|c| c.into_atom())
+                .and_then(Constant::into_atom)
                 .map(ModuleSource::Library)
                 .ok_or(CompilationError::InvalidUseModuleDecl)
         }
@@ -251,7 +254,7 @@ fn setup_qualified_import(
                 .pop()
                 .unwrap()
                 .into_constant()
-                .and_then(|c| c.into_atom())
+                .and_then(Constant::into_atom)
                 .map(ModuleSource::Library)
                 .ok_or(CompilationError::InvalidUseModuleDecl)
         }
@@ -266,10 +269,10 @@ fn setup_qualified_import(
         export_list = *t2;
     }
 
-    if export_list.into_constant() != Some(Constant::EmptyList) {
-        Err(CompilationError::InvalidModuleDecl)
-    } else {
+    if export_list.into_constant() == Some(Constant::EmptyList) {
         Ok((module_src, exports))
+    } else {
+        Err(CompilationError::InvalidModuleDecl)
     }
 }
 
@@ -793,9 +796,8 @@ impl Preprocessor {
                     }
 
                     continue;
-                } else {
-                    term = Term::Clause(cell, name, terms, op_spec);
                 }
+                term = Term::Clause(cell, name, terms, op_spec);
             }
 
             if let CutContext::HasCutVariable = cut_context {

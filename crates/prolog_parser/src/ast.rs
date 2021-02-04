@@ -1,8 +1,8 @@
-use ordered_float::*;
+use ordered_float::OrderedFloat;
 use rug::{Integer, Rational};
-use tabled_rc::*;
+use tabled_rc::{TabledData, TabledRc};
 
-use put_back_n::*;
+use put_back_n::{put_back_n, PutBackN};
 
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -63,71 +63,85 @@ pub fn rc_atom<I: Into<String>>(e: I) -> Rc<String> {
 }
 
 #[inline]
+#[must_use]
 pub fn is_term(x: u32) -> bool {
     (x & TERM) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_lterm(x: u32) -> bool {
     (x & LTERM) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_op(x: u32) -> bool {
     x & (XF | YF | FX | FY | XFX | XFY | YFX) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_negate(x: u32) -> bool {
     (x & NEGATIVE_SIGN) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_prefix(x: u32) -> bool {
     (x & (FX | FY)) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_postfix(x: u32) -> bool {
     (x & (XF | YF)) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_infix(x: u32) -> bool {
     (x & (XFX | XFY | YFX)) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_xfx(x: u32) -> bool {
     (x & XFX) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_xfy(x: u32) -> bool {
     (x & XFY) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_yfx(x: u32) -> bool {
     (x & YFX) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_yf(x: u32) -> bool {
     (x & YF) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_xf(x: u32) -> bool {
     (x & XF) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_fx(x: u32) -> bool {
     (x & FX) != 0
 }
 
 #[inline]
+#[must_use]
 pub fn is_fy(x: u32) -> bool {
     (x & FY) != 0
 }
@@ -145,12 +159,14 @@ impl Default for RegType {
 }
 
 impl RegType {
+    #[must_use]
     pub fn reg_num(self) -> usize {
         match self {
             RegType::Perm(reg_num) | RegType::Temp(reg_num) => reg_num,
         }
     }
 
+    #[must_use]
     pub fn is_perm(self) -> bool {
         matches!(self, RegType::Perm(_))
     }
@@ -172,6 +188,7 @@ pub enum VarReg {
 }
 
 impl VarReg {
+    #[must_use]
     pub fn norm(self) -> RegType {
         match self {
             VarReg::ArgAndNorm(reg, _) | VarReg::Norm(reg) => reg,
@@ -218,6 +235,7 @@ pub enum GenContext {
 }
 
 impl GenContext {
+    #[must_use]
     pub fn chunk_num(self) -> usize {
         match self {
             GenContext::Head => 0,
@@ -232,11 +250,13 @@ pub type OpDirKey = (ClauseName, Fixity);
 pub struct OpDirValue(pub SharedOpDesc);
 
 impl OpDirValue {
+    #[must_use]
     pub fn new(spec: Specifier, priority: usize) -> Self {
         OpDirValue(SharedOpDesc::new(priority, spec))
     }
 
     #[inline]
+    #[must_use]
     pub fn shared_op_desc(&self) -> SharedOpDesc {
         self.0.clone()
     }
@@ -266,14 +286,17 @@ pub enum DoubleQuotes {
 }
 
 impl DoubleQuotes {
+    #[must_use]
     pub fn is_chars(self) -> bool {
         matches!(self, DoubleQuotes::Chars)
     }
 
+    #[must_use]
     pub fn is_atom(self) -> bool {
         matches!(self, DoubleQuotes::Atom)
     }
 
+    #[must_use]
     pub fn is_codes(self) -> bool {
         matches!(self, DoubleQuotes::Codes)
     }
@@ -285,6 +308,7 @@ impl Default for DoubleQuotes {
     }
 }
 
+#[must_use]
 pub fn default_op_dir() -> OpDir {
     let mut op_dir = OpDir::new();
 
@@ -317,6 +341,7 @@ pub enum ParserError {
 }
 
 impl ParserError {
+    #[must_use]
     pub fn line_and_col_num(&self) -> Option<(usize, usize)> {
         match self {
             &ParserError::BackQuotedString(line_num, col_num)
@@ -330,6 +355,7 @@ impl ParserError {
         }
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match *self {
             ParserError::BackQuotedString(..) => "back_quoted_string",
@@ -370,6 +396,7 @@ pub struct CompositeOpDir<'a, 'b> {
 
 impl<'a, 'b> CompositeOpDir<'a, 'b> {
     #[inline]
+    #[must_use]
     pub fn new(secondary_op_dir: &'a OpDir, primary_op_dir: Option<&'b OpDir>) -> Self {
         CompositeOpDir {
             primary_op_dir,
@@ -379,13 +406,9 @@ impl<'a, 'b> CompositeOpDir<'a, 'b> {
 
     #[inline]
     pub(crate) fn get(&self, name: ClauseName, fixity: Fixity) -> Option<&OpDirValue> {
-        let entry = if let Some(ref primary_op_dir) = &self.primary_op_dir {
-            primary_op_dir.get(&(name.clone(), fixity))
-        } else {
-            None
-        };
-
-        entry.or_else(move || self.secondary_op_dir.get(&(name, fixity)))
+        self.primary_op_dir
+            .and_then(|primary_op_dir| primary_op_dir.get(&(name.clone(), fixity)))
+            .or_else(move || self.secondary_op_dir.get(&(name, fixity)))
     }
 }
 
@@ -401,16 +424,19 @@ pub struct SharedOpDesc(Rc<Cell<(usize, Specifier)>>);
 
 impl SharedOpDesc {
     #[inline]
+    #[must_use]
     pub fn new(priority: usize, spec: Specifier) -> Self {
         SharedOpDesc(Rc::new(Cell::new((priority, spec))))
     }
 
     #[inline]
-    pub fn ptr_eq(lop_desc: &SharedOpDesc, rop_desc: &SharedOpDesc) -> bool {
-        Rc::ptr_eq(&lop_desc.0, &rop_desc.0)
+    #[must_use]
+    pub fn ptr_eq(left: &SharedOpDesc, right: &SharedOpDesc) -> bool {
+        Rc::ptr_eq(&left.0, &right.0)
     }
 
     #[inline]
+    #[must_use]
     pub fn arity(&self) -> usize {
         if self.get().1 & (XFX | XFY | YFX) == 0 {
             1
@@ -420,6 +446,7 @@ impl SharedOpDesc {
     }
 
     #[inline]
+    #[must_use]
     pub fn get(&self) -> (usize, Specifier) {
         self.0.get()
     }
@@ -430,11 +457,13 @@ impl SharedOpDesc {
     }
 
     #[inline]
+    #[must_use]
     pub fn prec(&self) -> usize {
         self.0.get().0
     }
 
     #[inline]
+    #[must_use]
     pub fn assoc(&self) -> Specifier {
         self.0.get().1
     }
@@ -445,7 +474,7 @@ impl Deref for SharedOpDesc {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        self.0.deref()
+        &*self.0
     }
 }
 
@@ -512,11 +541,7 @@ impl PartialEq for Constant {
             (&Constant::Fixnum(n1), &Constant::Fixnum(n2)) => n1 == n2,
             (&Constant::Fixnum(n1), &Constant::Integer(ref n2))
             | (&Constant::Integer(ref n2), &Constant::Fixnum(n1)) => {
-                if let Some(n2) = n2.to_isize() {
-                    n1 == n2
-                } else {
-                    false
-                }
+                n2.to_isize().map_or(false, |n2| n1 == n2)
             }
             (&Constant::Integer(ref n1), &Constant::Integer(ref n2)) => n1 == n2,
             (&Constant::Rational(ref n1), &Constant::Rational(ref n2)) => n1 == n2,
@@ -548,6 +573,7 @@ impl Hash for Constant {
 }
 
 impl Constant {
+    #[must_use]
     pub fn into_atom(self) -> Option<ClauseName> {
         if let Constant::Atom(a, _) = self {
             Some(a.defrock_brackets())
@@ -603,6 +629,7 @@ impl<'a> From<&'a TabledRc<Atom>> for ClauseName {
 
 impl ClauseName {
     #[inline]
+    #[must_use]
     pub fn owning_module(&self) -> Self {
         if let ClauseName::User(ref name) = *self {
             let module = name.owning_module();
@@ -616,6 +643,7 @@ impl ClauseName {
     }
 
     #[inline]
+    #[must_use]
     pub fn to_rc(&self) -> Rc<String> {
         match *self {
             ClauseName::BuiltIn(s) => Rc::new(s.to_string()),
@@ -624,6 +652,7 @@ impl ClauseName {
     }
 
     #[inline]
+    #[must_use]
     pub fn with_table(self, atom_tbl: TabledData<Atom>) -> Self {
         match self {
             ClauseName::BuiltIn(_) => self,
@@ -635,6 +664,7 @@ impl ClauseName {
     }
 
     #[inline]
+    #[must_use]
     pub fn has_table(&self, atom_tbl: &TabledData<Atom>) -> bool {
         match self {
             ClauseName::BuiltIn(_) => false,
@@ -643,6 +673,7 @@ impl ClauseName {
     }
 
     #[inline]
+    #[must_use]
     pub fn has_table_of(&self, other: &ClauseName) -> bool {
         match self {
             ClauseName::BuiltIn(_) => {
@@ -653,6 +684,7 @@ impl ClauseName {
     }
 
     #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match *self {
             ClauseName::BuiltIn(s) => s,
@@ -661,10 +693,12 @@ impl ClauseName {
     }
 
     #[inline]
+    #[must_use]
     pub fn is_char(&self) -> bool {
         !self.as_str().is_empty() && self.as_str().chars().nth(1).is_none()
     }
 
+    #[must_use]
     pub fn defrock_brackets(self) -> Self {
         fn defrock_brackets(s: &str) -> &str {
             if s.starts_with('(') && s.ends_with(')') {
@@ -701,10 +735,10 @@ pub enum Term {
 
 impl Term {
     pub fn shared_op_desc(&self) -> Option<SharedOpDesc> {
-        match *self {
-            Term::Clause(_, _, _, ref spec) => spec.clone(),
-            Term::Constant(_, Constant::Atom(_, ref spec)) => spec.clone(),
-            _ => None,
+        if let Term::Clause(_, _, _, ref spec) | Term::Constant(_, Constant::Atom(_, ref spec)) = *self {
+            spec.clone()
+        } else {
+            None
         }
     }
 
@@ -782,6 +816,9 @@ pub type ParsingStream<R> = PutBackN<CodePoints<Bytes<R>>>;
 use unicode_reader::BadUtf8Error;
 
 #[inline]
+/// # Errors
+///
+/// Will return `Err` if the parsing stream returned an error
 pub fn parsing_stream<R: Read>(src: R) -> Result<ParsingStream<R>, ParserError> {
     let mut stream = put_back_n(CodePoints::from(src.bytes()));
     match stream.peek() {

@@ -401,26 +401,23 @@ impl Stream {
 
         match self.stream_inst.0.borrow_mut().deref_mut() {
             (past_end_of_stream, StreamInstance::InputFile(_, ref mut file)) => {
-                match file.metadata() {
-                    Ok(metadata) => {
-                        if let Ok(position) = file.seek(SeekFrom::Current(0)) {
-                            match position.cmp(&metadata.len()) {
-                                Ordering::Equal => AtEndOfStream::At,
-                                Ordering::Less => AtEndOfStream::Not,
-                                Ordering::Greater => {
-                                    *past_end_of_stream = true; //self.set_past_end_of_stream();
-                                    AtEndOfStream::Past
-                                }
+                if let Ok(metadata) = file.metadata() {
+                    if let Ok(position) = file.seek(SeekFrom::Current(0)) {
+                        match position.cmp(&metadata.len()) {
+                            Ordering::Equal => AtEndOfStream::At,
+                            Ordering::Less => AtEndOfStream::Not,
+                            Ordering::Greater => {
+                                *past_end_of_stream = true; //self.set_past_end_of_stream();
+                                AtEndOfStream::Past
                             }
-                        } else {
-                            *past_end_of_stream = true; //self.set_past_end_of_stream();
-                            AtEndOfStream::Past
                         }
-                    }
-                    _ => {
+                    } else {
                         *past_end_of_stream = true; //self.set_past_end_of_stream();
                         AtEndOfStream::Past
                     }
+                } else {
+                    *past_end_of_stream = true; //self.set_past_end_of_stream();
+                    AtEndOfStream::Past
                 }
             }
             _ => AtEndOfStream::Not,
@@ -586,7 +583,7 @@ impl Stream {
     pub(crate) fn peek_byte(&mut self) -> std::io::Result<u8> {
         match self.stream_inst.0.borrow_mut().1 {
             StreamInstance::Bytes(ref mut cursor) => {
-                let mut b = [0u8; 1];
+                let mut b = [0_u8; 1];
                 let pos = cursor.position();
 
                 match cursor.read(&mut b)? {
@@ -598,22 +595,21 @@ impl Stream {
                 }
             }
             StreamInstance::InputFile(_, ref mut file) => {
-                let mut b = [0u8; 1];
+                let mut b = [0_u8; 1];
 
-                match file.read(&mut b)? {
-                    1 => {
-                        file.seek(SeekFrom::Current(-1))?;
-                        Ok(b[0])
-                    }
-                    _ => Err(std::io::Error::new(
+                if let 1 = file.read(&mut b)? {
+                    file.seek(SeekFrom::Current(-1))?;
+                    Ok(b[0])
+                } else {
+                    Err(std::io::Error::new(
                         ErrorKind::UnexpectedEof,
                         StreamError::PeekByteFailed,
-                    )),
+                    ))
                 }
             }
             StreamInstance::ReadlineStream(ref mut stream) => stream.peek_byte(),
             StreamInstance::TcpStream(_, ref mut tcp_stream) => {
-                let mut b = [0u8; 1];
+                let mut b = [0_u8; 1];
                 tcp_stream.peek(&mut b)?;
                 Ok(b[0])
             }
@@ -650,7 +646,7 @@ impl Stream {
             StreamInstance::ReadlineStream(ref mut stream) => stream.peek_char(),
             StreamInstance::TcpStream(_, ref tcp_stream) => {
                 let c = {
-                    let mut buf = [0u8; 8];
+                    let mut buf = [0_u8; 8];
                     tcp_stream.peek(&mut buf)?;
 
                     let mut iter = CodePoints::from(buf.bytes());
@@ -843,9 +839,8 @@ impl MachineState {
                 if let HeapCellValue::Stream(ref stream) = &self.heap[h] {
                     if stream.is_null_stream() {
                         return Err(self.open_permission_error(Addr::Stream(h), caller, arity));
-                    } else {
-                        stream.clone()
                     }
+                    stream.clone()
                 } else {
                     unreachable!()
                 }
@@ -855,12 +850,11 @@ impl MachineState {
 
                 if addr.is_ref() {
                     return Err(self.error_form(MachineError::instantiation_error(), stub));
-                } else {
-                    return Err(self.error_form(
-                        MachineError::domain_error(DomainErrorType::StreamOrAlias, addr),
-                        stub,
-                    ));
                 }
+                return Err(self.error_form(
+                    MachineError::domain_error(DomainErrorType::StreamOrAlias, addr),
+                    stub,
+                ));
             }
         })
     }
@@ -974,10 +968,10 @@ impl MachineState {
             || (input.is_none() && !stream.is_output_stream())
         {
             Some("stream") // 8.14.2.3 g)
-        } else if stream.options.stream_type != expected_type {
-            Some(expected_type.other().as_str()) // 8.14.2.3 h)
-        } else {
+        } else if stream.options.stream_type == expected_type {
             None
+        } else {
+            Some(expected_type.other().as_str()) // 8.14.2.3 h)
         };
 
         let permission = if input.is_some() {

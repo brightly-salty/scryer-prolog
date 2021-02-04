@@ -1,13 +1,13 @@
-use crate::prolog_parser_rebis::ast::*;
-use crate::prolog_parser_rebis::tabled_rc::*;
+use crate::prolog_parser_rebis::ast::{
+    parsing_stream, Atom, ClauseName, CompositeOpDir, OpDir, RegType, SharedOpDesc, Specifier, Term,
+};
+use crate::prolog_parser_rebis::tabled_rc::{TabledData, TabledRc};
 
-use crate::clause_types::*;
-use crate::forms::*;
-use crate::instructions::*;
-use crate::machine::heap::*;
-use crate::machine::loader::*;
+use crate::forms::{AppendOrPrepend, ListingSource, PredicateKey};
+use crate::instructions::Line;
+use crate::machine::heap::Heap;
+use crate::machine::loader::{load_module, CompilationTarget};
 use crate::machine::term_stream::{LiveTermStream, LoadStatePayload, TermStream};
-use crate::read::*;
 
 mod attributed_variables;
 pub(super) mod code_repo;
@@ -33,18 +33,21 @@ mod arithmetic_ops;
 mod machine_state_impl;
 mod system_calls;
 
-//use crate::machine::attributed_variables::*;
-use crate::machine::code_repo::*;
-use crate::machine::compile::*;
-// use crate::machine::loader::*;
-use crate::machine::machine_errors::*;
-use crate::machine::machine_indices::*;
-use crate::machine::machine_state::*;
-use crate::machine::streams::*;
+use crate::machine::code_repo::CodeRepo;
+use crate::machine::compile::bootstrapping_compile;
+use crate::machine::machine_errors::{
+    CompilationError, ExistenceError, MachineError, SessionError,
+};
+use crate::machine::machine_indices::{
+    Addr, CodePtr, HeapCellValue, IndexStore, LocalCodePtr, REPLCodePtr,
+};
+use crate::machine::machine_state::{
+    CallPolicy, CutPolicy, DefaultCallPolicy, DefaultCutPolicy, MachineState,
+};
+use crate::machine::streams::Stream;
 
 use crate::indexmap::IndexMap;
 
-//use std::convert::TryFrom;
 use std::fs::File;
 use std::mem;
 use std::path::PathBuf;
@@ -180,14 +183,14 @@ impl Machine {
     */
     #[cfg(test)]
     pub fn reset(&mut self) {
-        self.current_input_stream = readline::input_stream();
+        self.current_input_stream = crate::read::readline::input_stream();
         self.policies.cut_policy = Box::new(DefaultCutPolicy {});
         self.machine_st.reset();
     }
 
-    fn run_module_predicate(&mut self, module_name: ClauseName, key: PredicateKey) {
-        if let Some(module) = self.indices.modules.get(&module_name) {
-            if let Some(ref code_index) = module.code_dir.get(&key) {
+    fn run_module_predicate(&mut self, module_name: &ClauseName, key: &PredicateKey) {
+        if let Some(module) = self.indices.modules.get(module_name) {
+            if let Some(ref code_index) = module.code_dir.get(key) {
                 let p = code_index.local().unwrap();
 
                 self.machine_st.cp = LocalCodePtr::Halt;
@@ -209,7 +212,7 @@ impl Machine {
             None,
         )));
 
-        self.run_module_predicate(clause_name!("loader"), (clause_name!("file_load"), 2));
+        self.run_module_predicate(&clause_name!("loader"), &(clause_name!("file_load"), 2));
     }
 
     fn load_top_level(&mut self) {
@@ -283,7 +286,7 @@ impl Machine {
         // WAS:
         // self.run_module_predicate(clause_name!("$toplevel"), (clause_name!("$repl"), 1));
 
-        self.run_module_predicate(clause_name!("$toplevel"), (clause_name!("repl"), 0));
+        self.run_module_predicate(&clause_name!("$toplevel"), &(clause_name!("repl"), 0));
     }
 
     pub fn new(user_input: Stream, user_output: Stream) -> Self {

@@ -1,20 +1,32 @@
-use crate::prolog_parser_rebis::ast::*;
-use crate::prolog_parser_rebis::parser::*;
-use crate::prolog_parser_rebis::tabled_rc::*;
+use crate::prolog_parser_rebis::ast::{
+    parsing_stream, ClauseName, CompositeOpDir, Constant, DoubleQuotes, Fixity, ParserError,
+    RegType, SharedOpDesc, Term, FX, FY, MAX_ARITY, XF, XFX, XFY, YF, YFX,
+};
+use crate::prolog_parser_rebis::parser::{get_clause_spec, get_op_desc, Parser};
+use crate::prolog_parser_rebis::tabled_rc::TabledRc;
 
-use crate::clause_types::*;
-use crate::forms::*;
-use crate::heap_print::*;
-use crate::instructions::*;
+use crate::clause_types::{SystemClauseType, RANDOM_STATE};
+use crate::forms::{fetch_atom_op_spec, ModuleSource, Number};
+use crate::heap_print::{non_quoted_token, HCValueOutputter};
+use crate::instructions::Line;
 use crate::machine;
 use crate::machine::code_repo::CodeRepo;
-use crate::machine::code_walker::*;
-use crate::machine::copier::*;
-use crate::machine::machine_errors::*;
-use crate::machine::machine_indices::*;
-use crate::machine::machine_state::*;
+use crate::machine::code_walker::walk_code;
+use crate::machine::copier::{copy_term, AttrVarPolicy, CopierTarget};
+use crate::machine::machine_errors::{
+    CompilationError, CycleSearchResult, DomainErrorType, ExistenceError, MachineError,
+    MachineStub, Permission, RepFlag, SessionError, ValidType,
+};
+use crate::machine::machine_indices::{
+    Addr, CodePtr, DBRef, HeapCellValue, IndexStore, LocalCodePtr, OrderedOpDirKey, OssifiedOpDir,
+    REPLCodePtr, Ref, TrailRef,
+};
+use crate::machine::machine_state::{
+    deref_cut, Ball, CWILCallPolicy, CallPolicy, CallResult, CopyBallTerm, CutPolicy,
+    DefaultCutPolicy, MachineState, SCCCutPolicy,
+};
 use crate::machine::preprocessor::to_op_decl;
-use crate::machine::streams::*;
+use crate::machine::streams::{EOFAction, Stream, StreamOptions, StreamType};
 
 use crate::ordered_float::OrderedFloat;
 use crate::read::readline;
@@ -62,7 +74,7 @@ use prolog_parser_rebis::macros::{
     octal_digit_char, prolog_char, sign_char, solo_char, symbolic_control_char,
     symbolic_hexadecimal_char,
 };
-use sodiumoxide::crypto::scalarmult::curve25519::*;
+use sodiumoxide::crypto::scalarmult::curve25519::{scalarmult, GroupElement, Scalar};
 
 use crate::native_tls::TlsConnector;
 
@@ -254,7 +266,10 @@ impl MachineState {
             if max_steps == -1 {
                 self.detect_cycles(self[temp_v!(3)])
             } else {
-                self.detect_cycles_with_max(max_steps as usize, self[temp_v!(3)])
+                self.detect_cycles_with_max(
+                    usize::try_from(max_steps).unwrap_or(usize::MAX),
+                    self[temp_v!(3)],
+                )
             }
         } else {
             self.detect_cycles(self[temp_v!(3)])
@@ -292,7 +307,7 @@ impl MachineState {
                     _ => None,
                 };
 
-                if max_steps_n.map(|i| i >= -1).unwrap_or(false) {
+                if max_steps_n.map_or(false, |i| i >= -1) {
                     let n = self.store(self.deref(self[temp_v!(1)]));
 
                     match Number::try_from((n, &self.heap)) {
@@ -631,7 +646,7 @@ impl MachineState {
                 let addr = self.heap.put_constant(Constant::Fixnum(n));
                 self.unify(nx, addr);
             }
-            _ => {
+            Ok(..) => {
                 let err = ParserError::ParseBigInt(0, 0);
 
                 let h = self.heap.h();
@@ -661,48 +676,47 @@ impl MachineState {
     fn call_continuation_chunk(&mut self, chunk: Addr, return_p: LocalCodePtr) -> LocalCodePtr {
         let chunk = self.store(self.deref(chunk));
 
-        match chunk {
-            Addr::Str(s) => {
-                match &self.heap[s] {
-                    HeapCellValue::NamedStr(arity, ..) => {
-                        let num_cells = arity - 1;
-                        let p_functor = self.heap[s + 1].as_addr(s + 1);
+        if let Addr::Str(s) = chunk {
+            if let HeapCellValue::NamedStr(arity, ..) = &self.heap[s] {
+                let num_cells = arity - 1;
+                let p_functor = self.heap[s + 1].as_addr(s + 1);
 
-                        let cp = self.heap.to_local_code_ptr(&p_functor).unwrap();
-                        let prev_e = self.e;
+                let cp = self.heap.to_local_code_ptr(&p_functor).unwrap();
+                let prev_e = self.e;
 
-                        let e = self.stack.allocate_and_frame(num_cells);
-                        let and_frame = self.stack.index_and_frame_mut(e);
+                let e = self.stack.allocate_and_frame(num_cells);
+                let and_frame = self.stack.index_and_frame_mut(e);
 
-                        and_frame.prelude.e = prev_e;
-                        and_frame.prelude.cp = return_p;
+                and_frame.prelude.e = prev_e;
+                and_frame.prelude.cp = return_p;
 
-                        self.p = CodePtr::Local(cp + 1);
+                self.p = CodePtr::Local(cp + 1);
 
-                        // adjust cut point to occur after call_continuation.
-                        if num_cells > 0 {
-                            if let Addr::CutPoint(_) = self.heap[s + 2].as_addr(s + 2) {
-                                and_frame[1] = Addr::CutPoint(self.b);
-                            } else {
-                                and_frame[1] = self.heap[s + 2].as_addr(s + 2);
-                            }
-                        }
-
-                        for index in s + 3..s + 2 + num_cells {
-                            and_frame[index - (s + 1)] = self.heap[index].as_addr(index);
-                        }
-
-                        self.e = e;
-
-                        self.p.local()
+                // adjust cut point to occur after call_continuation.
+                if num_cells > 0 {
+                    if let Addr::CutPoint(_) = self.heap[s + 2].as_addr(s + 2) {
+                        and_frame[1] = Addr::CutPoint(self.b);
+                    } else {
+                        and_frame[1] = self.heap[s + 2].as_addr(s + 2);
                     }
-                    _ => unreachable!(),
                 }
+
+                for index in s + 3..s + 2 + num_cells {
+                    and_frame[index - (s + 1)] = self.heap[index].as_addr(index);
+                }
+
+                self.e = e;
+
+                self.p.local()
+            } else {
+                unreachable!()
             }
-            _ => unreachable!(),
+        } else {
+            unreachable!()
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub(super) fn system_call(
         &mut self,
         ct: &SystemClauseType,
@@ -844,21 +858,15 @@ impl MachineState {
                 if let Ok(entries) = fs::read_dir(path) {
                     for entry in entries {
                         if let Ok(entry) = entry {
-                            match entry.file_name().into_string() {
-                                Ok(name) => {
-                                    files.push(self.heap.put_complete_string(&name));
-                                }
-                                _ => {
-                                    let stub = MachineError::functor_stub(
-                                        clause_name!("directory_files"),
-                                        2,
-                                    );
-                                    let err =
-                                        MachineError::representation_error(RepFlag::Character);
-                                    let err = self.error_form(err, stub);
+                            if let Ok(name) = entry.file_name().into_string() {
+                                files.push(self.heap.put_complete_string(&name));
+                            } else {
+                                let stub =
+                                    MachineError::functor_stub(clause_name!("directory_files"), 2);
+                                let err = MachineError::representation_error(RepFlag::Character);
+                                let err = self.error_form(err, stub);
 
-                                    return Err(err);
-                                }
+                                return Err(err);
                             }
                         }
                     }
@@ -901,37 +909,29 @@ impl MachineState {
             SystemClauseType::MakeDirectory => {
                 let directory = self.heap_pstr_iter(self[temp_v!(1)]).as_string();
 
-                match fs::create_dir(directory) {
-                    Ok(_) => {}
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                if fs::create_dir(directory).is_err() {
+                    self.fail = true;
+                    return Ok(());
                 }
             }
             SystemClauseType::DeleteFile => {
                 let file = self.heap_pstr_iter(self[temp_v!(1)]).as_string();
 
-                match fs::remove_file(file) {
-                    Ok(_) => {}
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                if fs::remove_file(file).is_err() {
+                    self.fail = true;
+                    return Ok(());
                 }
             }
             SystemClauseType::WorkingDirectory => {
                 if let Ok(dir) = env::current_dir() {
-                    let current = match dir.to_str() {
-                        Some(d) => d,
-                        _ => {
-                            let stub =
-                                MachineError::functor_stub(clause_name!("working_directory"), 2);
-                            let err = MachineError::representation_error(RepFlag::Character);
-                            let err = self.error_form(err, stub);
+                    let current = if let Some(d) = dir.to_str() {
+                        d
+                    } else {
+                        let stub = MachineError::functor_stub(clause_name!("working_directory"), 2);
+                        let err = MachineError::representation_error(RepFlag::Character);
+                        let err = self.error_form(err, stub);
 
-                            return Err(err);
-                        }
+                        return Err(err);
                     };
 
                     let chars = self.heap.put_complete_string(current);
@@ -939,12 +939,9 @@ impl MachineState {
 
                     let next = self.heap_pstr_iter(self[temp_v!(2)]).as_string();
 
-                    match env::set_current_dir(std::path::Path::new(&next)) {
-                        Ok(_) => {}
-                        _ => {
-                            self.fail = true;
-                            return Ok(());
-                        }
+                    if env::set_current_dir(std::path::Path::new(&next)).is_err() {
+                        self.fail = true;
+                        return Ok(());
                     }
                 } else {
                     self.fail = true;
@@ -954,26 +951,21 @@ impl MachineState {
             SystemClauseType::PathCanonical => {
                 let path = self.heap_pstr_iter(self[temp_v!(1)]).as_string();
 
-                match fs::canonicalize(path) {
-                    Ok(canonical) => {
-                        let cs = match canonical.to_str() {
-                            Some(s) => s,
-                            _ => {
-                                let stub =
-                                    MachineError::functor_stub(clause_name!("path_canonical"), 2);
-                                let err = MachineError::representation_error(RepFlag::Character);
-                                let err = self.error_form(err, stub);
+                if let Ok(canonical) = fs::canonicalize(path) {
+                    let cs = if let Some(s) = canonical.to_str() {
+                        s
+                    } else {
+                        let stub = MachineError::functor_stub(clause_name!("path_canonical"), 2);
+                        let err = MachineError::representation_error(RepFlag::Character);
+                        let err = self.error_form(err, stub);
 
-                                return Err(err);
-                            }
-                        };
-                        let chars = self.heap.put_complete_string(cs);
-                        self.unify(self[temp_v!(2)], chars);
-                    }
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                        return Err(err);
+                    };
+                    let chars = self.heap.put_complete_string(cs);
+                    self.unify(self[temp_v!(2)], chars);
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 }
             }
             SystemClauseType::FileTime => {
@@ -1076,9 +1068,8 @@ impl MachineState {
                                     );
 
                                     return Err(self.error_form(err, stub));
-                                } else {
-                                    unreachable!()
                                 }
+                                unreachable!()
                             }
                         }
                     }
@@ -1398,16 +1389,15 @@ impl MachineState {
                                 break;
                             } else if addr == Addr::Usize(b as usize) {
                                 break;
-                            } else {
-                                self.fail = true;
-                                return Ok(());
                             }
+                            self.fail = true;
+                            return Ok(());
                         }
                         Err(ErrorKind::PermissionDenied) => {
                             self.fail = true;
                             break;
                         }
-                        _ => {
+                        Err(..) => {
                             self.eof_action(
                                 self[temp_v!(2)],
                                 &mut stream,
@@ -1494,16 +1484,15 @@ impl MachineState {
                                 break;
                             } else if addr == Addr::Char(d) {
                                 break;
-                            } else {
-                                self.fail = true;
-                                return Ok(());
                             }
+                            self.fail = true;
+                            return Ok(());
                         }
                         Err(ErrorKind::PermissionDenied) => {
                             self.fail = true;
                             break;
                         }
-                        _ => {
+                        Err(..) => {
                             self.eof_action(
                                 self[temp_v!(2)],
                                 &mut stream,
@@ -1609,16 +1598,15 @@ impl MachineState {
                                 break;
                             } else if addr == Addr::Fixnum(c as isize) {
                                 break;
-                            } else {
-                                self.fail = true;
-                                return Ok(());
                             }
+                            self.fail = true;
+                            return Ok(());
                         }
                         Err(ErrorKind::PermissionDenied) => {
                             self.fail = true;
                             break;
                         }
-                        _ => {
+                        Err(..) => {
                             self.eof_action(
                                 self[temp_v!(2)],
                                 &mut stream,
@@ -2041,9 +2029,8 @@ impl MachineState {
                                     if let Some(c) = atom.as_str().chars().next() {
                                         write!(&mut stream, "{}", c).unwrap();
                                         return return_from_clause!(self.last_call, self);
-                                    } else {
-                                        unreachable!()
                                     }
+                                    unreachable!()
                                 }
                                 _ => {}
                             },
@@ -2089,24 +2076,17 @@ impl MachineState {
                     bytes = string.into_bytes();
                 }
 
-                match stream.write_all(&bytes) {
-                    Ok(_) => {
-                        return return_from_clause!(self.last_call, self);
-                    }
-                    _ => {
-                        let stub = MachineError::functor_stub(clause_name!("$put_chars"), 2);
-
-                        let addr = self.heap.as_unifiable(HeapCellValue::Stream(stream));
-
-                        return Err(self.error_form(
-                            MachineError::existence_error(
-                                self.heap.h(),
-                                ExistenceError::Stream(addr),
-                            ),
-                            stub,
-                        ));
-                    }
+                if stream.write_all(&bytes).is_ok() {
+                    return return_from_clause!(self.last_call, self);
                 }
+                let stub = MachineError::functor_stub(clause_name!("$put_chars"), 2);
+
+                let addr = self.heap.as_unifiable(HeapCellValue::Stream(stream));
+
+                return Err(self.error_form(
+                    MachineError::existence_error(self.heap.h(), ExistenceError::Stream(addr)),
+                    stub,
+                ));
             }
             SystemClauseType::PutByte => {
                 let mut stream =
@@ -2131,56 +2111,42 @@ impl MachineState {
                         match Number::try_from((addr, &self.heap)) {
                             Ok(Number::Integer(n)) => {
                                 if let Some(nb) = n.to_u8() {
-                                    match stream.write(&[nb]) {
-                                        Ok(1) => {
-                                            return return_from_clause!(self.last_call, self);
-                                        }
-                                        _ => {
-                                            let stub = MachineError::functor_stub(
-                                                clause_name!("put_byte"),
-                                                2,
-                                            );
-
-                                            let addr = self
-                                                .heap
-                                                .as_unifiable(HeapCellValue::Stream(stream));
-
-                                            return Err(self.error_form(
-                                                MachineError::existence_error(
-                                                    self.heap.h(),
-                                                    ExistenceError::Stream(addr),
-                                                ),
-                                                stub,
-                                            ));
-                                        }
+                                    if let Ok(1) = stream.write(&[nb]) {
+                                        return return_from_clause!(self.last_call, self);
                                     }
+                                    let stub =
+                                        MachineError::functor_stub(clause_name!("put_byte"), 2);
+
+                                    let addr =
+                                        self.heap.as_unifiable(HeapCellValue::Stream(stream));
+
+                                    return Err(self.error_form(
+                                        MachineError::existence_error(
+                                            self.heap.h(),
+                                            ExistenceError::Stream(addr),
+                                        ),
+                                        stub,
+                                    ));
                                 }
                             }
                             Ok(Number::Fixnum(n)) => {
                                 if let Ok(nb) = u8::try_from(n) {
-                                    match stream.write(&[nb]) {
-                                        Ok(1) => {
-                                            return return_from_clause!(self.last_call, self);
-                                        }
-                                        _ => {
-                                            let stub = MachineError::functor_stub(
-                                                clause_name!("put_byte"),
-                                                2,
-                                            );
-
-                                            let addr = self
-                                                .heap
-                                                .as_unifiable(HeapCellValue::Stream(stream));
-
-                                            return Err(self.error_form(
-                                                MachineError::existence_error(
-                                                    self.heap.h(),
-                                                    ExistenceError::Stream(addr),
-                                                ),
-                                                stub,
-                                            ));
-                                        }
+                                    if let Ok(1) = stream.write(&[nb]) {
+                                        return return_from_clause!(self.last_call, self);
                                     }
+                                    let stub =
+                                        MachineError::functor_stub(clause_name!("put_byte"), 2);
+
+                                    let addr =
+                                        self.heap.as_unifiable(HeapCellValue::Stream(stream));
+
+                                    return Err(self.error_form(
+                                        MachineError::existence_error(
+                                            self.heap.h(),
+                                            ExistenceError::Stream(addr),
+                                        ),
+                                        stub,
+                                    ));
                                 }
                             }
                             _ => {}
@@ -2257,22 +2223,19 @@ impl MachineState {
                     },
                 };
 
-                let mut b = [0u8; 1];
+                let mut b = [0_u8; 1];
 
-                match stream.read(&mut b) {
-                    Ok(1) => {
-                        if let Some(var) = addr.as_var() {
-                            self.bind(var, Addr::Usize(b[0] as usize));
-                        } else if addr != Addr::Usize(b[0] as usize) {
-                            self.fail = true;
-                            return Ok(());
-                        }
+                if let Ok(1) = stream.read(&mut b) {
+                    if let Some(var) = addr.as_var() {
+                        self.bind(var, Addr::Usize(b[0] as usize));
+                    } else if addr != Addr::Usize(b[0] as usize) {
+                        self.fail = true;
+                        return Ok(());
                     }
-                    _ => {
-                        stream.set_past_end_of_stream();
-                        self.unify(self[temp_v!(2)], Addr::Fixnum(-1));
-                        return return_from_clause!(self.last_call, self);
-                    }
+                } else {
+                    stream.set_past_end_of_stream();
+                    self.unify(self[temp_v!(2)], Addr::Fixnum(-1));
+                    return return_from_clause!(self.last_call, self);
                 }
             }
             SystemClauseType::GetChar => {
@@ -2342,39 +2305,22 @@ impl MachineState {
                 loop {
                     let result = iter.next();
 
-                    match result {
-                        Some(Ok(d)) => {
-                            if let Some(var) = addr.as_var() {
-                                self.bind(var, Addr::Char(d));
-                                break;
-                            } else if addr == Addr::Char(d) {
-                                break;
-                            } else {
-                                self.fail = true;
-                                return Ok(());
-                            }
+                    if let Some(Ok(d)) = result {
+                        if let Some(var) = addr.as_var() {
+                            self.bind(var, Addr::Char(d));
+                            break;
+                        } else if addr == Addr::Char(d) {
+                            break;
                         }
-                        _ => {
-                            self.eof_action(
-                                self[temp_v!(2)],
-                                &mut stream,
-                                clause_name!("get_char"),
-                                2,
-                            )?;
+                        self.fail = true;
+                        return Ok(());
+                    }
+                    self.eof_action(self[temp_v!(2)], &mut stream, clause_name!("get_char"), 2)?;
 
-                            if EOFAction::Reset != stream.options.eof_action {
-                                return return_from_clause!(self.last_call, self);
-                            } else if self.fail {
-                                return Ok(());
-                            }
-                        } /*
-                          _ => {
-                              let stub = MachineError::functor_stub(clause_name!("get_char"), 2);
-                              let err = MachineError::representation_error(RepFlag::Character);
-                              let err = self.error_form(err, stub);
-
-                              return Err(err);
-                          }*/
+                    if EOFAction::Reset != stream.options.eof_action {
+                        return return_from_clause!(self.last_call, self);
+                    } else if self.fail {
+                        return Ok(());
                     }
                 }
             }
@@ -2384,13 +2330,14 @@ impl MachineState {
 
                 let num = match Number::try_from((self[temp_v!(2)], &self.heap)) {
                     Ok(Number::Fixnum(n)) => usize::try_from(n).unwrap(),
-                    Ok(Number::Integer(n)) => match n.to_usize() {
-                        Some(u) => u,
-                        _ => {
+                    Ok(Number::Integer(n)) => {
+                        if let Some(u) = n.to_usize() {
+                            u
+                        } else {
                             self.fail = true;
                             return Ok(());
                         }
-                    },
+                    }
                     _ => {
                         unreachable!()
                     }
@@ -2501,39 +2448,22 @@ impl MachineState {
                 loop {
                     let result = iter.next();
 
-                    match result {
-                        Some(Ok(c)) => {
-                            if let Some(var) = addr.as_var() {
-                                self.bind(var, Addr::Fixnum(c as isize));
-                                break;
-                            } else if addr == Addr::Fixnum(c as isize) {
-                                break;
-                            } else {
-                                self.fail = true;
-                                return Ok(());
-                            }
+                    if let Some(Ok(c)) = result {
+                        if let Some(var) = addr.as_var() {
+                            self.bind(var, Addr::Fixnum(c as isize));
+                            break;
+                        } else if addr == Addr::Fixnum(c as isize) {
+                            break;
                         }
-                        _ => {
-                            self.eof_action(
-                                self[temp_v!(2)],
-                                &mut stream,
-                                clause_name!("get_code"),
-                                2,
-                            )?;
+                        self.fail = true;
+                        return Ok(());
+                    }
+                    self.eof_action(self[temp_v!(2)], &mut stream, clause_name!("get_code"), 2)?;
 
-                            if EOFAction::Reset != stream.options.eof_action {
-                                return return_from_clause!(self.last_call, self);
-                            } else if self.fail {
-                                return Ok(());
-                            }
-                        } /*
-                          _ => {
-                              let stub = MachineError::functor_stub(clause_name!("get_char"), 2);
-                              let err = MachineError::representation_error(RepFlag::Character);
-                              let err = self.error_form(err, stub);
-
-                              return Err(err);
-                          }*/
+                    if EOFAction::Reset != stream.options.eof_action {
+                        return return_from_clause!(self.last_call, self);
+                    } else if self.fail {
+                        return Ok(());
                     }
                 }
             }
@@ -2545,9 +2475,8 @@ impl MachineState {
                     if !stream.is_null_stream() {
                         first_stream = Some(stream);
                         break;
-                    } else {
-                        null_streams.insert(stream);
                     }
+                    null_streams.insert(stream);
                 }
 
                 indices.streams = indices.streams.sub(&null_streams);
@@ -2583,9 +2512,8 @@ impl MachineState {
                     if !stream.is_null_stream() {
                         next_stream = Some(stream);
                         break;
-                    } else {
-                        null_streams.insert(stream);
                     }
+                    null_streams.insert(stream);
                 }
 
                 indices.streams = indices.streams.sub(&null_streams);
@@ -2892,11 +2820,11 @@ impl MachineState {
                 match self.store(self.deref(self[temp_v!(2 + narity)])) {
                     Addr::Str(a) => {
                         if let HeapCellValue::NamedStr(arity, name, _) = self.heap.clone(a) {
-                            for i in (arity + 1..arity + narity + 1).rev() {
+                            for i in (arity + 1..=arity + narity).rev() {
                                 self.registers[i] = self.registers[i - arity];
                             }
 
-                            for i in 1..arity + 1 {
+                            for i in 1..=arity {
                                 self.registers[i] = self.heap[a + i].as_addr(a + i);
                             }
 
@@ -2909,9 +2837,8 @@ impl MachineState {
                                 current_input_stream,
                                 current_output_stream,
                             );
-                        } else {
-                            unreachable!()
                         }
+                        unreachable!()
                     }
                     Addr::Con(h) if self.heap.atom_at(h) => {
                         if let HeapCellValue::Atom(name, _) = self.heap.clone(h) {
@@ -2924,9 +2851,8 @@ impl MachineState {
                                 current_input_stream,
                                 current_output_stream,
                             );
-                        } else {
-                            unreachable!()
                         }
+                        unreachable!()
                     }
                     addr => {
                         let stub = MachineError::functor_stub(clause_name!("(:)"), 2);
@@ -2967,7 +2893,7 @@ impl MachineState {
                     addr @ Addr::HeapCell(_)
                     | addr @ Addr::StackCell(..)
                     | addr @ Addr::AttrVar(_) => {
-                        for ((name, arity), _) in indices.code_dir.iter() {
+                        for (name, arity) in indices.code_dir.keys() {
                             if is_builtin_predicate(&name) {
                                 continue;
                             }
@@ -2991,11 +2917,8 @@ impl MachineState {
                         self.fail = true;
                     }
                     Addr::Con(h) => match self.heap.clone(h) {
-                        HeapCellValue::DBRef(DBRef::Op(..)) => {
-                            self.fail = true;
-                        }
-                        HeapCellValue::DBRef(ref db_ref) => {
-                            self.get_next_db_ref(indices, db_ref);
+                        HeapCellValue::DBRef(db_ref @ DBRef::NamedPred(..)) => {
+                            self.get_next_db_ref(indices, &db_ref);
                         }
                         _ => {
                             self.fail = true;
@@ -3033,33 +2956,29 @@ impl MachineState {
 
                         let ossified_op_dir = Rc::new(unossified_op_dir);
 
-                        match ossified_op_dir.iter().next() {
-                            Some((OrderedOpDirKey(name, _), (priority, spec))) => {
-                                let db_ref = DBRef::Op(
-                                    *priority,
-                                    *spec,
-                                    name.clone(),
-                                    ossified_op_dir.clone(),
-                                    SharedOpDesc::new(*priority, *spec),
-                                );
+                        if let Some((OrderedOpDirKey(name, _), (priority, spec))) =
+                            ossified_op_dir.iter().next()
+                        {
+                            let db_ref = DBRef::Op(
+                                *priority,
+                                *spec,
+                                name.clone(),
+                                ossified_op_dir.clone(),
+                                SharedOpDesc::new(*priority, *spec),
+                            );
 
-                                let r = addr.as_var().unwrap();
-                                let addr = self.heap.as_unifiable(HeapCellValue::DBRef(db_ref));
+                            let r = addr.as_var().unwrap();
+                            let addr = self.heap.as_unifiable(HeapCellValue::DBRef(db_ref));
 
-                                self.bind(r, addr);
-                            }
-                            None => {
-                                self.fail = true;
-                                return Ok(());
-                            }
+                            self.bind(r, addr);
+                        } else {
+                            self.fail = true;
+                            return Ok(());
                         }
                     }
                     Addr::Con(h) => match self.heap.clone(h) {
-                        HeapCellValue::DBRef(DBRef::NamedPred(..)) => {
-                            self.fail = true;
-                        }
-                        HeapCellValue::DBRef(ref db_ref) => {
-                            self.get_next_db_ref(indices, db_ref);
+                        HeapCellValue::DBRef(db_ref @ DBRef::Op(..)) => {
+                            self.get_next_db_ref(indices, &db_ref);
                         }
                         _ => {
                             self.fail = true;
@@ -3361,21 +3280,23 @@ impl MachineState {
                 let p_functor = self.store(self.deref(self[temp_v!(2)]));
                 let p = self.heap.to_local_code_ptr(&p_functor).unwrap();
 
-                let num_cells = match code_repo.lookup_instr(self.last_call, &CodePtr::Local(p)) {
-                    Some(line) => {
-                        let perm_vars = match line.as_ref() {
-                            Line::Control(ref ctrl_instr) => ctrl_instr.perm_vars(),
-                            _ => None,
-                        };
+                let num_cells = if let Some(line) =
+                    code_repo.lookup_instr(self.last_call, &CodePtr::Local(p))
+                {
+                    let perm_vars = if let Line::Control(ref ctrl_instr) = line.as_ref() {
+                        ctrl_instr.perm_vars()
+                    } else {
+                        None
+                    };
 
-                        perm_vars.unwrap()
-                    }
-                    _ => unreachable!(),
+                    perm_vars.unwrap()
+                } else {
+                    unreachable!()
                 };
 
                 let mut addrs = vec![];
 
-                for index in 1..num_cells + 1 {
+                for index in 1..=num_cells {
                     addrs.push(self.stack.index_and_frame(e)[index]);
                 }
 
@@ -3528,7 +3449,7 @@ impl MachineState {
                 let code = self.store(self.deref(self[temp_v!(1)]));
 
                 let code = match Number::try_from((code, &self.heap)) {
-                    Ok(Number::Fixnum(n)) => n as i32,
+                    Ok(Number::Fixnum(n)) => i32::try_from(n).unwrap_or(i32::MAX),
                     Ok(Number::Integer(n)) => n.to_i32().unwrap(),
                     Ok(Number::Rational(r)) => {
                         // n has already been confirmed as an integer, and
@@ -3549,8 +3470,8 @@ impl MachineState {
                 let prev_block = self.block;
 
                 if cut_policy.downcast_ref::<SCCCutPolicy>().is_err() {
-                    let (r_c_w_h, r_c_wo_h) = indices.get_cleaner_sites();
-                    *cut_policy = Box::new(SCCCutPolicy::new(r_c_w_h, r_c_wo_h));
+                    let (r_c_with_h, r_c_without_h) = indices.get_cleaner_sites();
+                    *cut_policy = Box::new(SCCCutPolicy::new(r_c_with_h, r_c_without_h));
                 }
 
                 match cut_policy.downcast_mut::<SCCCutPolicy>().ok() {
@@ -3976,9 +3897,10 @@ impl MachineState {
 
                 let ball = self.heap[h].as_addr(h);
 
-                match addr.as_var() {
-                    Some(r) => self.bind(r, ball),
-                    _ => self.fail = true,
+                if let Some(r) = addr.as_var() {
+                    self.bind(r, ball)
+                } else {
+                    self.fail = true
                 };
             }
             SystemClauseType::GetCurrentBlock => {
@@ -4111,12 +4033,11 @@ impl MachineState {
             SystemClauseType::PointsToContinuationResetMarker => {
                 let addr = self.store(self.deref(self[temp_v!(1)]));
 
-                let p = match self.heap.to_local_code_ptr(&addr) {
-                    Some(p) => p + 1,
-                    None => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                let p = if let Some(p) = self.heap.to_local_code_ptr(&addr) {
+                    p + 1
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 };
 
                 if p.is_reset_cont_marker(code_repo, self.last_call) {
@@ -4250,7 +4171,9 @@ impl MachineState {
 
                 let time = match Number::try_from((time, &self.heap)) {
                     Ok(Number::Float(OrderedFloat(n))) => n,
-                    Ok(Number::Fixnum(n)) => n as f64,
+                    Ok(Number::Fixnum(n)) => {
+                        f64::try_from(i32::try_from(n).unwrap_or(i32::MAX)).unwrap_or(f64::MAX)
+                    }
                     Ok(Number::Integer(n)) => n.to_f64(),
                     _ => {
                         unreachable!()
@@ -4457,7 +4380,7 @@ impl MachineState {
                         Err(ErrorKind::PermissionDenied) => {
                             return Err(self.open_permission_error(addr, "socket_server_open", 2));
                         }
-                        _ => {
+                        Err(..) => {
                             self.fail = true;
                             return Ok(());
                         }
@@ -4495,40 +4418,37 @@ impl MachineState {
                 match self.store(self.deref(self[temp_v!(1)])) {
                     Addr::TcpListener(h) => match &mut self.heap[h] {
                         HeapCellValue::TcpListener(ref mut tcp_listener) => {
-                            match tcp_listener.accept().ok() {
-                                Some((tcp_stream, socket_addr)) => {
-                                    let client =
-                                        clause_name!(format!("{}", socket_addr), self.atom_tbl);
+                            if let Ok((tcp_stream, socket_addr)) = tcp_listener.accept() {
+                                let client =
+                                    clause_name!(format!("{}", socket_addr), self.atom_tbl);
 
-                                    let mut tcp_stream =
-                                        Stream::from_tcp_stream(client.clone(), tcp_stream);
+                                let mut tcp_stream =
+                                    Stream::from_tcp_stream(client.clone(), tcp_stream);
 
-                                    tcp_stream.options = options;
+                                tcp_stream.options = options;
 
-                                    if let Some(ref alias) = &tcp_stream.options.alias {
-                                        indices
-                                            .stream_aliases
-                                            .insert(alias.clone(), tcp_stream.clone());
-                                    }
-
-                                    indices.streams.insert(tcp_stream.clone());
-
-                                    let tcp_stream =
-                                        self.heap.as_unifiable(HeapCellValue::Stream(tcp_stream));
-
-                                    let client =
-                                        self.heap.as_unifiable(HeapCellValue::Atom(client, None));
-
-                                    let client_addr = self.store(self.deref(self[temp_v!(2)]));
-                                    let stream_addr = self.store(self.deref(self[temp_v!(3)]));
-
-                                    self.bind(client_addr.as_var().unwrap(), client);
-                                    self.bind(stream_addr.as_var().unwrap(), tcp_stream);
+                                if let Some(ref alias) = &tcp_stream.options.alias {
+                                    indices
+                                        .stream_aliases
+                                        .insert(alias.clone(), tcp_stream.clone());
                                 }
-                                None => {
-                                    self.fail = true;
-                                    return Ok(());
-                                }
+
+                                indices.streams.insert(tcp_stream.clone());
+
+                                let tcp_stream =
+                                    self.heap.as_unifiable(HeapCellValue::Stream(tcp_stream));
+
+                                let client =
+                                    self.heap.as_unifiable(HeapCellValue::Atom(client, None));
+
+                                let client_addr = self.store(self.deref(self[temp_v!(2)]));
+                                let stream_addr = self.store(self.deref(self[temp_v!(3)]));
+
+                                self.bind(client_addr.as_var().unwrap(), client);
+                                self.bind(stream_addr.as_var().unwrap(), tcp_stream);
+                            } else {
+                                self.fail = true;
+                                return Ok(());
                             }
                         }
                         culprit => {
@@ -4586,7 +4506,7 @@ impl MachineState {
                 let position = self.store(self.deref(self[temp_v!(2)]));
 
                 let position = match Number::try_from((position, &self.heap)) {
-                    Ok(Number::Fixnum(n)) => n as u64,
+                    Ok(Number::Fixnum(n)) => u64::try_from(n).unwrap_or(u64::MAX),
                     Ok(Number::Integer(n)) => {
                         if let Some(n) = n.to_u64() {
                             n
@@ -4638,7 +4558,9 @@ impl MachineState {
                             }
                             "position" => {
                                 if let Some(position) = stream.position() {
-                                    HeapCellValue::Addr(Addr::Usize(position as usize))
+                                    HeapCellValue::Addr(Addr::Usize(
+                                        usize::try_from(position).unwrap_or(usize::MAX),
+                                    ))
                                 } else {
                                     self.fail = true;
                                     return Ok(());
@@ -4834,9 +4756,10 @@ impl MachineState {
 
                 let first_idx = match module_name.as_str() {
                     "user" => indices.code_dir.get(&key),
-                    _ => match indices.modules.get(&module_name) {
-                        Some(module) => module.code_dir.get(&key),
-                        None => {
+                    _ => {
+                        if let Some(module) = indices.modules.get(&module_name) {
+                            module.code_dir.get(&key)
+                        } else {
                             let stub = MachineError::functor_stub(key.0, key.1);
                             let h = self.heap.h();
 
@@ -4852,7 +4775,7 @@ impl MachineState {
                             self.throw_exception(err);
                             return Ok(());
                         }
-                    },
+                    }
                 };
 
                 let first_idx = match first_idx {
@@ -4946,17 +4869,14 @@ impl MachineState {
 
                 let output = printer.print(addr);
 
-                match write!(&mut stream, "{}", output.result()) {
-                    Ok(_) => {}
-                    Err(_) => {
-                        let stub = MachineError::functor_stub(clause_name!("open"), 4);
-                        let err = MachineError::existence_error(
-                            self.heap.h(),
-                            ExistenceError::Stream(self[temp_v!(1)]),
-                        );
+                if write!(&mut stream, "{}", output.result()).is_err() {
+                    let stub = MachineError::functor_stub(clause_name!("open"), 4);
+                    let err = MachineError::existence_error(
+                        self.heap.h(),
+                        ExistenceError::Stream(self[temp_v!(1)]),
+                    );
 
-                        return Err(self.error_form(err, stub));
-                    }
+                    return Err(self.error_form(err, stub));
                 }
 
                 stream.flush().unwrap();
@@ -4995,15 +4915,12 @@ impl MachineState {
                 let arg = self[temp_v!(1)];
                 let mut bytes: [u8; 1] = [0];
 
-                match rng().fill(&mut bytes) {
-                    Ok(()) => {}
-                    Err(_) => {
-                        // the error payload here is of type 'Unspecified',
-                        // which contains no information whatsoever. So, for now,
-                        // just fail.
-                        self.fail = true;
-                        return Ok(());
-                    }
+                if rng().fill(&mut bytes).is_err() {
+                    // the error payload here is of type 'Unspecified',
+                    // which contains no information whatsoever. So, for now,
+                    // just fail.
+                    self.fail = true;
+                    return Ok(());
                 }
 
                 let byte = self
@@ -5018,120 +4935,107 @@ impl MachineState {
 
                 let algorithm = self.atom_argument_to_string(4);
 
-                let ints_list = match algorithm.as_str() {
-                    "sha3_224" => {
-                        let mut context = Sha3_224::new();
-                        context.input(&bytes);
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                context
-                                    .result()
-                                    .as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                    "sha3_256" => {
-                        let mut context = Sha3_256::new();
-                        context.input(&bytes);
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                context
-                                    .result()
-                                    .as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                    "sha3_384" => {
-                        let mut context = Sha3_384::new();
-                        context.input(&bytes);
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                context
-                                    .result()
-                                    .as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                    "sha3_512" => {
-                        let mut context = Sha3_512::new();
-                        context.input(&bytes);
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                context
-                                    .result()
-                                    .as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                    "blake2s256" => {
-                        let mut context = Blake2s::new();
-                        context.input(&bytes);
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                context
-                                    .result()
-                                    .as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                    "blake2b512" => {
-                        let mut context = Blake2b::new();
-                        context.input(&bytes);
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                context
-                                    .result()
-                                    .as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                    "ripemd160" => {
-                        let mut context = Ripemd160::new();
-                        context.input(&bytes);
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                context
-                                    .result()
-                                    .as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                    _ => {
-                        let ints = digest::digest(
-                            match algorithm.as_str() {
-                                "sha256" => &digest::SHA256,
-                                "sha384" => &digest::SHA384,
-                                "sha512" => &digest::SHA512,
-                                "sha512_256" => &digest::SHA512_256,
-                                _ => {
-                                    unreachable!()
-                                }
-                            },
-                            &bytes,
-                        );
-                        Addr::HeapCell(
-                            self.heap.as_list(
-                                ints.as_ref()
-                                    .iter()
-                                    .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
-                            ),
-                        )
-                    }
-                };
+                let ints_list =
+                    match algorithm.as_str() {
+                        "sha3_224" => {
+                            let mut context = Sha3_224::new();
+                            context.input(&bytes);
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    context.result().as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                        "sha3_256" => {
+                            let mut context = Sha3_256::new();
+                            context.input(&bytes);
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    context.result().as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                        "sha3_384" => {
+                            let mut context = Sha3_384::new();
+                            context.input(&bytes);
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    context.result().as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                        "sha3_512" => {
+                            let mut context = Sha3_512::new();
+                            context.input(&bytes);
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    context.result().as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                        "blake2s256" => {
+                            let mut context = Blake2s::new();
+                            context.input(&bytes);
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    context.result().as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                        "blake2b512" => {
+                            let mut context = Blake2b::new();
+                            context.input(&bytes);
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    context.result().as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                        "ripemd160" => {
+                            let mut context = Ripemd160::new();
+                            context.input(&bytes);
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    context.result().as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                        _ => {
+                            let ints = digest::digest(
+                                match algorithm.as_str() {
+                                    "sha256" => &digest::SHA256,
+                                    "sha384" => &digest::SHA384,
+                                    "sha512" => &digest::SHA512,
+                                    "sha512_256" => &digest::SHA512_256,
+                                    _ => {
+                                        unreachable!()
+                                    }
+                                },
+                                &bytes,
+                            );
+                            Addr::HeapCell(
+                                self.heap.as_list(
+                                    ints.as_ref().iter().map(|b| {
+                                        HeapCellValue::from(Addr::Fixnum(isize::from(*b)))
+                                    }),
+                                ),
+                            )
+                        }
+                    };
 
                 self.unify(self[temp_v!(3)], ints_list);
             }
@@ -5149,13 +5053,14 @@ impl MachineState {
 
                 let length = match Number::try_from((length, &self.heap)) {
                     Ok(Number::Fixnum(n)) => usize::try_from(n).unwrap(),
-                    Ok(Number::Integer(n)) => match n.to_usize() {
-                        Some(u) => u,
-                        _ => {
+                    Ok(Number::Integer(n)) => {
+                        if let Some(u) = n.to_usize() {
+                            u
+                        } else {
                             self.fail = true;
                             return Ok(());
                         }
-                    },
+                    }
                     _ => {
                         unreachable!()
                     }
@@ -5174,21 +5079,18 @@ impl MachineState {
                     let salt = hkdf::Salt::new(digest_alg, &salt);
                     let mut bytes: Vec<u8> = Vec::new();
                     bytes.resize(length, 0);
-                    match salt.extract(&data).expand(&[&info[..]], MyKey(length)) {
-                        Ok(r) => {
-                            r.fill(&mut bytes).unwrap();
-                        }
-                        _ => {
-                            self.fail = true;
-                            return Ok(());
-                        }
+                    if let Ok(r) = salt.extract(&data).expand(&[&info[..]], MyKey(length)) {
+                        r.fill(&mut bytes).unwrap();
+                    } else {
+                        self.fail = true;
+                        return Ok(());
                     }
 
                     Addr::HeapCell(
                         self.heap.as_list(
                             bytes
                                 .iter()
-                                .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
+                                .map(|b| HeapCellValue::from(Addr::Fixnum(isize::from(*b)))),
                         ),
                     )
                 };
@@ -5205,23 +5107,24 @@ impl MachineState {
 
                 let iterations = match Number::try_from((iterations, &self.heap)) {
                     Ok(Number::Fixnum(n)) => u64::try_from(n).unwrap(),
-                    Ok(Number::Integer(n)) => match n.to_u64() {
-                        Some(i) => i,
-                        None => {
+                    Ok(Number::Integer(n)) => {
+                        if let Some(i) = n.to_u64() {
+                            i
+                        } else {
                             self.fail = true;
                             return Ok(());
                         }
-                    },
+                    }
                     _ => {
                         unreachable!()
                     }
                 };
 
                 let ints_list = {
-                    let mut bytes = [0u8; digest::SHA512_OUTPUT_LEN];
+                    let mut bytes = [0_u8; digest::SHA512_OUTPUT_LEN];
                     pbkdf2::derive(
                         pbkdf2::PBKDF2_HMAC_SHA512,
-                        NonZeroU32::new(iterations as u32).unwrap(),
+                        NonZeroU32::new(u32::try_from(iterations).unwrap_or(u32::MAX)).unwrap(),
                         &salt,
                         &data,
                         &mut bytes,
@@ -5231,7 +5134,7 @@ impl MachineState {
                         self.heap.as_list(
                             bytes
                                 .iter()
-                                .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
+                                .map(|b| HeapCellValue::from(Addr::Fixnum(isize::from(*b)))),
                         ),
                     )
                 };
@@ -5252,23 +5155,20 @@ impl MachineState {
                 let key = aead::LessSafeKey::new(unbound_key);
 
                 let mut in_out = data;
-                let tag = match key.seal_in_place_separate_tag(
-                    nonce,
-                    aead::Aad::from(aad),
-                    &mut in_out,
-                ) {
-                    Ok(d) => d,
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                let tag = if let Ok(d) =
+                    key.seal_in_place_separate_tag(nonce, aead::Aad::from(aad), &mut in_out)
+                {
+                    d
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 };
 
                 let tag_list = Addr::HeapCell(
                     self.heap.as_list(
                         tag.as_ref()
                             .iter()
-                            .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
+                            .map(|b| HeapCellValue::from(Addr::Fixnum(isize::from(*b)))),
                     ),
                 );
 
@@ -5296,24 +5196,25 @@ impl MachineState {
                 let mut in_out = data;
 
                 let complete_string = {
-                    let decrypted_data =
-                        match key.open_in_place(nonce, aead::Aad::from(aad), &mut in_out) {
-                            Ok(d) => d,
-                            _ => {
-                                self.fail = true;
-                                return Ok(());
-                            }
-                        };
+                    let decrypted_data = if let Ok(d) =
+                        key.open_in_place(nonce, aead::Aad::from(aad), &mut in_out)
+                    {
+                        d
+                    } else {
+                        self.fail = true;
+                        return Ok(());
+                    };
 
                     let buffer = match encoding.as_str() {
                         "octet" => String::from_iter(decrypted_data.iter().map(|b| *b as char)),
-                        "utf8" => match String::from_utf8(decrypted_data.to_vec()) {
-                            Ok(str) => str,
-                            _ => {
+                        "utf8" => {
+                            if let Ok(str) = String::from_utf8(decrypted_data.to_vec()) {
+                                str
+                            } else {
                                 self.fail = true;
                                 return Ok(());
                             }
-                        },
+                        }
                         _ => {
                             unreachable!()
                         }
@@ -5381,12 +5282,11 @@ impl MachineState {
             SystemClauseType::Ed25519KeyPairPublicKey => {
                 let bytes = self.string_encoding_bytes(1, "octet");
 
-                let key_pair = match signature::Ed25519KeyPair::from_pkcs8(&bytes) {
-                    Ok(kp) => kp,
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                let key_pair = if let Ok(kp) = signature::Ed25519KeyPair::from_pkcs8(&bytes) {
+                    kp
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 };
 
                 let complete_string = {
@@ -5403,12 +5303,11 @@ impl MachineState {
                 let encoding = self.atom_argument_to_string(3);
                 let data = self.string_encoding_bytes(2, &encoding);
 
-                let key_pair = match signature::Ed25519KeyPair::from_pkcs8(&key) {
-                    Ok(kp) => kp,
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                let key_pair = if let Ok(kp) = signature::Ed25519KeyPair::from_pkcs8(&key) {
+                    kp
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 };
 
                 let sig = key_pair.sign(&data);
@@ -5417,7 +5316,7 @@ impl MachineState {
                     self.heap.as_list(
                         sig.as_ref()
                             .iter()
-                            .map(|b| HeapCellValue::from(Addr::Fixnum(*b as isize))),
+                            .map(|b| HeapCellValue::from(Addr::Fixnum(isize::from(*b)))),
                     ),
                 );
 
@@ -5431,12 +5330,9 @@ impl MachineState {
                 let signature = self.integers_to_bytevec(temp_v!(4), stub);
 
                 let peer_public_key = signature::UnparsedPublicKey::new(&signature::ED25519, &key);
-                match peer_public_key.verify(&data, &signature) {
-                    Ok(_) => {}
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                if peer_public_key.verify(&data, &signature).is_err() {
+                    self.fail = true;
+                    return Ok(());
                 }
             }
             SystemClauseType::Curve25519ScalarMult => {
@@ -5463,28 +5359,22 @@ impl MachineState {
             }
             SystemClauseType::LoadXML => {
                 let string = self.heap_pstr_iter(self[temp_v!(1)]).as_string();
-                match roxmltree::Document::parse(&string) {
-                    Ok(doc) => {
-                        let result = self.xml_node_to_term(indices, doc.root_element());
-                        self.unify(self[temp_v!(2)], result);
-                    }
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                if let Ok(doc) = roxmltree::Document::parse(&string) {
+                    let result = self.xml_node_to_term(indices, doc.root_element());
+                    self.unify(self[temp_v!(2)], result);
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 }
             }
             SystemClauseType::GetEnv => {
                 let key = self.heap_pstr_iter(self[temp_v!(1)]).as_string();
-                match env::var(key) {
-                    Ok(value) => {
-                        let cstr = self.heap.put_complete_string(&value);
-                        self.unify(self[temp_v!(2)], cstr);
-                    }
-                    _ => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                if let Ok(value) = env::var(key) {
+                    let cstr = self.heap.put_complete_string(&value);
+                    self.unify(self[temp_v!(2)], cstr);
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 }
             }
             SystemClauseType::SetEnv => {
@@ -5516,16 +5406,13 @@ impl MachineState {
                     let b64 = self.heap_pstr_iter(self[temp_v!(2)]).as_string();
                     let bytes = base64::decode_config(b64, config);
 
-                    match bytes {
-                        Ok(bs) => {
-                            let string = String::from_iter(bs.iter().map(|b| *b as char));
-                            let cstr = self.heap.put_complete_string(&string);
-                            self.unify(self[temp_v!(1)], cstr);
-                        }
-                        _ => {
-                            self.fail = true;
-                            return Ok(());
-                        }
+                    if let Ok(bs) = bytes {
+                        let string = String::from_iter(bs.iter().map(|b| *b as char));
+                        let cstr = self.heap.put_complete_string(&string);
+                        self.unify(self[temp_v!(1)], cstr);
+                    } else {
+                        self.fail = true;
+                        return Ok(());
                     }
                 } else {
                     let mut bytes = vec![];
@@ -5551,9 +5438,9 @@ impl MachineState {
                 }
             }
             SystemClauseType::LoadLibraryAsStream => {
-                let library_name = atom_from!(self, self.store(self.deref(self[temp_v!(1)])));
-
                 use crate::LIBRARIES;
+
+                let library_name = atom_from!(self, self.store(self.deref(self[temp_v!(1)])));
 
                 match LIBRARIES.borrow().get(library_name.as_str()) {
                     Some(library) => {
@@ -5668,11 +5555,11 @@ impl MachineState {
             }
             let attrs = Addr::HeapCell(self.heap.as_list(avec.into_iter()));
 
-            let mut cvec = Vec::new();
+            let mut child_vec = Vec::new();
             for child in node.children() {
-                cvec.push(self.xml_node_to_term(indices, child));
+                child_vec.push(self.xml_node_to_term(indices, child));
             }
-            let children = Addr::HeapCell(self.heap.as_list(cvec.into_iter()));
+            let children = Addr::HeapCell(self.heap.as_list(child_vec.into_iter()));
 
             let chars = clause_name!(String::from(node.tag_name().name()), self.atom_tbl);
             let tag = self.heap.as_unifiable(HeapCellValue::Atom(chars, None));
@@ -5711,11 +5598,11 @@ impl MachineState {
             }
             let attrs = Addr::HeapCell(self.heap.as_list(avec.into_iter()));
 
-            let mut cvec = Vec::new();
+            let mut child_vec = Vec::new();
             for child in node.children() {
-                cvec.push(self.html_node_to_term(indices, child));
+                child_vec.push(self.html_node_to_term(indices, child));
             }
-            let children = Addr::HeapCell(self.heap.as_list(cvec.into_iter()));
+            let children = Addr::HeapCell(self.heap.as_list(child_vec.into_iter()));
 
             let chars = clause_name!(String::from(name), self.atom_tbl);
             let tag = self.heap.as_unifiable(HeapCellValue::Atom(chars, None));
@@ -5736,13 +5623,11 @@ impl MachineState {
 }
 
 fn rng() -> &'static dyn SecureRandom {
-    use std::ops::Deref;
-
     lazy_static! {
         static ref RANDOM: SystemRandom = SystemRandom::new();
     }
 
-    RANDOM.deref()
+    &*RANDOM
 }
 
 struct MyKey<T: core::fmt::Debug + PartialEq>(T);

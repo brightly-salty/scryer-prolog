@@ -1,13 +1,13 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{rc_atom, ClauseName, Constant, RegType, Term, Var, VarReg};
 
-use crate::clause_types::*;
-use crate::forms::*;
-use crate::machine::machine_indices::*;
+use crate::clause_types::ClauseType;
+use crate::forms::{Level, QueryTerm, Rule};
+use crate::machine::machine_indices::CodeIndex;
 
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::fmt;
-use std::iter::*;
+use std::iter::{once, IntoIterator, Iterator};
 use std::rc::Rc;
 use std::vec::Vec;
 
@@ -28,8 +28,8 @@ impl<'a> TermRef<'a> {
             | TermRef::Cons(lvl, ..)
             | TermRef::Constant(lvl, ..)
             | TermRef::Var(lvl, ..)
-            | TermRef::Clause(lvl, ..) => lvl,
-            TermRef::PartialString(lvl, ..) => lvl,
+            | TermRef::Clause(lvl, ..)
+            | TermRef::PartialString(lvl, ..) => lvl,
         }
     }
 }
@@ -88,11 +88,10 @@ impl<'a> TermIterState<'a> {
         match *term {
             Term::AnonVar => TermIterState::AnonVar(lvl),
             Term::Clause(ref cell, ref name, ref subterms, ref spec) => {
-                let ct = if let Some(spec) = spec {
-                    ClauseType::Op(name.clone(), spec.clone(), CodeIndex::default())
-                } else {
-                    ClauseType::Named(name.clone(), subterms.len(), CodeIndex::default())
-                };
+                let ct = spec.clone().map_or_else(
+                    || ClauseType::Named(name.clone(), subterms.len(), CodeIndex::default()),
+                    |spec| ClauseType::Op(name.clone(), spec, CodeIndex::default()),
+                );
 
                 TermIterState::Clause(lvl, 0, cell, ct, subterms)
             }
@@ -128,7 +127,7 @@ impl<'a> QueryIterator<'a> {
 
     fn from_term(term: &'a Term) -> Self {
         let state = match *term {
-            Term::AnonVar => {
+            Term::AnonVar | Term::Cons(..) | Term::Constant(_, _) => {
                 return QueryIterator {
                     state_stack: vec![],
                 }
@@ -140,16 +139,6 @@ impl<'a> QueryIterator<'a> {
                 ClauseType::from(name.clone(), terms.len(), fixity.clone()),
                 terms,
             ),
-            Term::Cons(..) => {
-                return QueryIterator {
-                    state_stack: vec![],
-                }
-            }
-            Term::Constant(_, _) => {
-                return QueryIterator {
-                    state_stack: vec![],
-                }
-            }
             Term::Var(ref cell, ref var) => TermIterState::Var(Level::Root, cell, (*var).clone()),
         };
 
@@ -350,12 +339,11 @@ impl<'a> Iterator for FactIterator<'a> {
                         }
 
                         return Some(TermRef::PartialString(lvl, cell, string, tail));
-                    } else {
-                        self.push_subterm(Level::Deep, head);
-                        self.push_subterm(Level::Deep, tail);
-
-                        return Some(TermRef::Cons(lvl, cell, head, tail));
                     }
+                    self.push_subterm(Level::Deep, head);
+                    self.push_subterm(Level::Deep, tail);
+
+                    return Some(TermRef::Cons(lvl, cell, head, tail));
                 }
                 TermIterState::Constant(lvl, cell, constant) => {
                     return Some(TermRef::Constant(lvl, cell, constant))
@@ -439,7 +427,7 @@ impl<'a> ChunkedIterator<'a> {
                 .into_iter()
                 .filter_map(|ct| match ct {
                     ChunkedTerm::BodyTerm(qt) => Some(qt),
-                    _ => None,
+                    ChunkedTerm::HeadClause(..) => None,
                 })
                 .collect();
 

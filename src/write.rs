@@ -1,9 +1,16 @@
-use crate::clause_types::*;
-use crate::forms::*;
+use crate::clause_types::{
+    ArithmeticTerm, ClauseType, CompareNumberQT, CompareTermQT, SystemClauseType,
+};
+use crate::forms::{Level, ModuleSource, Number};
 use crate::indexing::IndexingCodePtr;
-use crate::instructions::*;
-use crate::machine::machine_errors::*;
-use crate::machine::machine_indices::*;
+use crate::instructions::{
+    ArithmeticInstruction, ChoiceInstruction, ControlInstruction, CutInstruction, FactInstruction,
+    IndexedChoiceInstruction, IndexingInstruction, IndexingLine, Line, QueryInstruction,
+};
+use crate::machine::machine_errors::{ExistenceError, SessionError};
+use crate::machine::machine_indices::{
+    Addr, DBRef, HeapCellValue, IndexPtr, LocalCodePtr, REPLCodePtr,
+};
 
 use std::fmt;
 
@@ -54,8 +61,7 @@ impl fmt::Display for REPLCodePtr {
 impl fmt::Display for IndexPtr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Self::DynamicUndefined => write!(f, "undefined"),
-            Self::Undefined => write!(f, "undefined"),
+            Self::DynamicUndefined | Self::Undefined => write!(f, "undefined"),
             Self::Index(i) => write!(f, "{}", i),
         }
     }
@@ -318,17 +324,17 @@ impl fmt::Display for IndexingCodePtr {
 impl fmt::Display for IndexingInstruction {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Self::SwitchOnTerm(a, var, constant, list, string) => {
+            Self::Term(a, var, constant, list, string) => {
                 write!(
                     f,
                     "switch_on_term {}, {}, {}, {}, {}",
                     a, var, constant, list, string
                 )
             }
-            Self::SwitchOnConstant(ref constants) => {
+            Self::Constant(ref constants) => {
                 write!(f, "switch_on_constant {}", constants.len())
             }
-            Self::SwitchOnStructure(ref structures) => {
+            Self::Structure(ref structures) => {
                 write!(f, "switch_on_structure {}", structures.len())
             }
         }

@@ -1,15 +1,18 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{
+    default_op_dir, is_infix, is_postfix, ClauseName, Constant, Fixity, OpDir, OpDirValue, RegType,
+    SharedOpDesc, Specifier, Term, Var, VarReg, FX, FY, XF, XFX, XFY, YF, YFX,
+};
 use crate::prolog_parser_rebis::parser::OpDesc;
 
-use crate::clause_types::*;
-use crate::machine::machine_errors::*;
-use crate::machine::machine_indices::*;
+use crate::clause_types::ClauseType;
+use crate::machine::machine_errors::{MachineStub, SessionError};
+use crate::machine::machine_indices::{Addr, CodeDir, HeapCellValue, MetaPredicateDir};
 use crate::ordered_float::OrderedFloat;
 use crate::rug::{Integer, Rational};
 
 use crate::indexmap::{IndexMap, IndexSet};
 
-use slice_deque::*;
+use slice_deque::{sdeq, SliceDeque};
 
 use std::cell::Cell;
 use std::ops::AddAssign;
@@ -113,11 +116,9 @@ impl ListingSource {
 
 pub trait ClauseInfo {
     fn is_consistent(&self, clauses: &[PredicateClause]) -> bool {
-        if let Some(cl) = clauses.first() {
+        clauses.first().map_or(true, |cl| {
             self.name() == cl.name() && self.arity() == cl.arity()
-        } else {
-            true
-        }
+        })
     }
 
     fn name(&self) -> Option<ClauseName>;
@@ -490,7 +491,7 @@ impl From<isize> for Number {
 
 impl Default for Number {
     fn default() -> Self {
-        Number::Float(OrderedFloat(0f64))
+        Number::Float(OrderedFloat(0_f64))
     }
 }
 
@@ -544,7 +545,7 @@ impl Number {
         match *self {
             Self::Fixnum(n) => n == 0,
             Self::Integer(ref n) => **n == 0,
-            Self::Float(f) => f == OrderedFloat(0f64),
+            Self::Float(f) => f == OrderedFloat(0_f64),
             Self::Rational(ref r) => **r == 0,
         }
     }
@@ -552,13 +553,9 @@ impl Number {
     #[inline]
     pub fn abs(self) -> Self {
         match self {
-            Self::Fixnum(n) => {
-                if let Some(n) = n.checked_abs() {
-                    Self::from(n)
-                } else {
-                    Self::from(Integer::from(n).abs())
-                }
-            }
+            Self::Fixnum(n) => n
+                .checked_abs()
+                .map_or_else(|| Self::from(Integer::from(n).abs()), Self::from),
             Self::Integer(n) => Self::from(Integer::from(n.abs_ref())),
             Self::Float(f) => Self::Float(OrderedFloat(f.abs())),
             Self::Rational(r) => Self::from(Rational::from(r.abs_ref())),

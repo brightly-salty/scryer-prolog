@@ -11,7 +11,6 @@ use crate::machine::partial_string::*;
 use crate::machine::raw_block::RawBlockTraits;
 use crate::machine::streams::Stream;
 use crate::machine::term_stream::LoadStatePayload;
-use crate::machine::Ball;
 use crate::machine::CompilationTarget;
 use crate::ordered_float::OrderedFloat;
 use crate::rug::{Integer, Rational};
@@ -819,19 +818,19 @@ impl IndexStore {
     }
 
     pub(super) fn get_cleaner_sites(&self) -> (usize, usize) {
-        let r_w_h = clause_name!("run_cleaners_with_handling");
-        let r_wo_h = clause_name!("run_cleaners_without_handling");
+        let r_with_h = clause_name!("run_cleaners_with_handling");
+        let r_without_h = clause_name!("run_cleaners_without_handling");
         let iso_ext = clause_name!("iso_ext");
 
-        let r_w_h = self
-            .get_predicate_code_index(r_w_h, 0, iso_ext.clone(), None)
+        let r_with_h = self
+            .get_predicate_code_index(r_with_h, 0, iso_ext.clone(), None)
             .and_then(|item| item.local());
-        let r_wo_h = self
-            .get_predicate_code_index(r_wo_h, 1, iso_ext, None)
+        let r_without_h = self
+            .get_predicate_code_index(r_without_h, 1, iso_ext, None)
             .and_then(|item| item.local());
 
-        if let Some(r_w_h) = r_w_h {
-            if let Some(r_wo_h) = r_wo_h {
+        if let Some(r_w_h) = r_with_h {
+            if let Some(r_wo_h) = r_without_h {
                 return (r_w_h, r_wo_h);
             }
         }

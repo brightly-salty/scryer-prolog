@@ -1,7 +1,7 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{ClauseName, RegType, SharedOpDesc, XFX};
 
 use crate::forms::Number;
-use crate::machine::machine_indices::*;
+use crate::machine::machine_indices::{CodeIndex, REPLCodePtr};
 use crate::rug::rand::RandState;
 
 use crate::ref_thread_local::RefThreadLocal;
@@ -870,20 +870,17 @@ impl BuiltInClauseType {
 
     pub fn arity(&self) -> usize {
         match *self {
-            Self::AcyclicTerm => 1,
-            Self::Arg => 3,
-            Self::Compare => 2,
-            Self::CompareTerm(_) => 2,
-            Self::CopyTerm => 2,
-            Self::Eq => 2,
-            Self::Functor => 3,
-            Self::Ground => 1,
-            Self::Is(..) => 2,
-            Self::KeySort => 2,
-            Self::NotEq => 2,
             Self::Nl => 0,
-            Self::Read => 1,
-            Self::Sort => 2,
+            Self::Read | Self::AcyclicTerm | Self::Ground => 1,
+            Self::Sort
+            | Self::Compare
+            | Self::CompareTerm(_)
+            | Self::CopyTerm
+            | Self::Eq
+            | Self::Is(..)
+            | Self::KeySort
+            | Self::NotEq => 2,
+            Self::Arg | Self::Functor => 3,
         }
     }
 }
@@ -906,8 +903,7 @@ impl ClauseType {
             Self::BuiltIn(ref built_in) => built_in.name(),
             Self::CallN => clause_name!("call"),
             Self::Inlined(ref inlined) => clause_name!(inlined.name()),
-            Self::Op(ref name, ..) => name.clone(),
-            Self::Named(ref name, ..) => name.clone(),
+            Self::Op(ref name, ..) | Self::Named(ref name, ..) => name.clone(),
             Self::System(ref system) => system.name(),
         }
     }
@@ -918,9 +914,8 @@ impl ClauseType {
             .get(&(name.as_str(), arity))
             .cloned()
             .unwrap_or_else(|| {
-                SystemClauseType::from(name.as_str(), arity)
-                    .map(ClauseType::System)
-                    .unwrap_or_else(|| {
+                SystemClauseType::from(name.as_str(), arity).map_or_else(
+                    || {
                         if let Some(spec) = spec {
                             ClauseType::Op(name, spec, CodeIndex::default())
                         } else if name.as_str() == "call" {
@@ -928,7 +923,9 @@ impl ClauseType {
                         } else {
                             ClauseType::Named(name, arity, CodeIndex::default())
                         }
-                    })
+                    },
+                    ClauseType::System,
+                )
             })
     }
 }

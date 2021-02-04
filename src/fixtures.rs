@@ -1,8 +1,8 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{GenContext, RegType, Var, VarReg};
 
-use crate::forms::*;
-use crate::instructions::*;
-use crate::iterators::*;
+use crate::forms::Level;
+use crate::instructions::QueryInstruction;
+use crate::iterators::TermRef;
 
 use crate::indexmap::{IndexMap, IndexSet};
 
@@ -48,9 +48,9 @@ pub struct TempVarData {
 
 impl TempVarData {
     pub fn new(last_term_arity: usize) -> Self {
-        TempVarData {
+        Self {
             last_term_arity,
-            ..Default::default()
+            ..Self::default()
         }
     }
 
@@ -63,8 +63,8 @@ impl TempVarData {
             let arity = self.last_term_arity;
             let mut conflict_set: BTreeSet<usize> = (1..arity).collect();
 
-            for &(_, reg) in self.use_set.iter() {
-                conflict_set.remove(&reg);
+            for (_, reg) in &self.use_set {
+                conflict_set.remove(reg);
             }
 
             self.conflict_set = conflict_set;
@@ -120,12 +120,12 @@ impl<'a> VariableFixtures<'a> {
 
         for (u, use_set) in use_sets.drain(..) {
             // 2.
-            for &(term_loc, reg) in use_set.iter() {
-                if let GenContext::Last(cn_u) = term_loc {
+            for (term_loc, reg) in &use_set {
+                if let GenContext::Last(cn_u) = *term_loc {
                     for (ref t, &mut (ref mut var_status, _)) in self.iter_mut() {
                         if let VarStatus::Temp(cn_t, ref mut t_data) = *var_status {
-                            if cn_u == cn_t && *u != ***t && !t_data.uses_reg(reg) {
-                                t_data.no_use_set.insert(reg);
+                            if cn_u == cn_t && *u != ***t && !t_data.uses_reg(*reg) {
+                                t_data.no_use_set.insert(*reg);
                             }
                         }
                     }
@@ -133,27 +133,24 @@ impl<'a> VariableFixtures<'a> {
             }
 
             // 3.
-            if let (VarStatus::Temp(_, ref mut u_data), _) = *self.get_mut(u).unwrap() {
+            if let (VarStatus::Temp(_, ref mut u_data), _) = *self.get_mut(&u).unwrap() {
                 u_data.use_set = use_set;
                 u_data.populate_conflict_set();
             };
         }
     }
 
-    fn get_mut(&mut self, u: Rc<Var>) -> Option<&mut VariableFixture<'a>> {
-        self.perm_vars.get_mut(&u)
+    fn get_mut(&mut self, u: &Rc<Var>) -> Option<&mut VariableFixture<'a>> {
+        self.perm_vars.get_mut(u)
     }
 
     fn iter_mut(&mut self) -> indexmap::map::IterMut<Rc<Var>, VariableFixture<'a>> {
         self.perm_vars.iter_mut()
     }
 
-    fn record_temp_info(&mut self, tvd: &mut TempVarData, arg_c: usize, term_loc: GenContext) {
-        match term_loc {
-            GenContext::Head | GenContext::Last(_) => {
-                tvd.use_set.insert((term_loc, arg_c));
-            }
-            _ => {}
+    fn record_temp_info(tvd: &mut TempVarData, arg_c: usize, term_loc: GenContext) {
+        if let GenContext::Head | GenContext::Last(_) = term_loc {
+            tvd.use_set.insert((term_loc, arg_c));
         };
     }
 
@@ -190,7 +187,7 @@ impl<'a> VariableFixtures<'a> {
                 match status.0 {
                     VarStatus::Temp(cn, ref mut tvd) if cn == chunk_num => {
                         if let Level::Shallow = lvl {
-                            self.record_temp_info(tvd, arg_c, term_loc);
+                            Self::record_temp_info(tvd, arg_c, term_loc);
                         }
                     }
                     _ => status.0 = VarStatus::Perm(chunk_num),

@@ -1,7 +1,11 @@
 use prolog_parser_rebis::ast::*;
 
+use crate::clause_types::ClauseType;
 use crate::forms::*;
 use crate::indexing::*;
+use crate::instructions::{
+    ChoiceInstruction, ControlInstruction, IndexingInstruction, IndexingLine,
+};
 use crate::machine::load_state::*;
 use crate::machine::machine_indices::*;
 use crate::machine::preprocessor::*;
@@ -358,11 +362,8 @@ impl<'a> Drop for LoadState<'a> {
                     if let Line::IndexingCode(ref mut indexing_code) =
                         &mut self.wam.code_repo.code[index_loc]
                     {
-                        if let IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
-                            _,
-                            ref mut v,
-                            ..,
-                        )) = &mut indexing_code[0]
+                        if let IndexingLine::Indexing(IndexingInstruction::Term(_, ref mut v, ..)) =
+                            &mut indexing_code[0]
                         {
                             *v = old_v;
                         }
@@ -1282,21 +1283,22 @@ impl Machine {
                 skeleton.is_dynamic = true
             }
 
-            loader.compile_clause_clauses(key, std::iter::once((head, body)), append_or_prepend)?;
+            loader.compile_clause_clauses(
+                &key,
+                std::iter::once((head, body)),
+                append_or_prepend,
+            )?;
 
             LiveTermStream::evacuate(loader)
         };
 
-        match compile_user_assert() {
-            Ok(_) => {}
-            Err(e) => {
-                let error_pi = match append_or_prepend {
-                    AppendOrPrepend::Append => (clause_name!("assertz"), 1),
-                    AppendOrPrepend::Prepend => (clause_name!("asserta"), 1),
-                };
+        if let Err(e) = compile_user_assert() {
+            let error_pi = match append_or_prepend {
+                AppendOrPrepend::Append => (clause_name!("assertz"), 1),
+                AppendOrPrepend::Prepend => (clause_name!("asserta"), 1),
+            };
 
-                self.throw_session_error(e, error_pi);
-            }
+            self.throw_session_error(e, error_pi);
         }
     }
 
@@ -1555,7 +1557,7 @@ impl<'a> Loader<'a, LiveTermStream> {
         let result = self.load_state.incremental_compile_clause(
             key,
             clause,
-            queue,
+            &queue,
             non_counted_bt,
             append_or_prepend,
         );

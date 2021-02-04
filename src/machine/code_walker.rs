@@ -1,4 +1,4 @@
-use crate::instructions::*;
+use crate::instructions::{ChoiceInstruction, ControlInstruction, Line};
 
 use indexmap::IndexSet;
 
@@ -48,9 +48,8 @@ pub fn walk_code(code: &[Line], p: usize, mut walker: impl FnMut(&Line)) {
     while let Some(first_index) = stack.pop() {
         if visited_indices.contains(&first_index) {
             continue;
-        } else {
-            visited_indices.insert(first_index);
         }
+        visited_indices.insert(first_index);
 
         for (index, instr) in code[first_index..].iter().enumerate() {
             walker(instr);

@@ -1,16 +1,18 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{
+    ArithmeticError, ClauseName, Constant, RegType, Term, Var, VarReg,
+};
 
-use crate::clause_types::*;
-use crate::fixtures::*;
-use crate::forms::*;
-use crate::instructions::*;
-use crate::iterators::*;
+use crate::clause_types::{ArithmeticTerm, ClauseType, InlinedClauseType};
+use crate::fixtures::VarData;
+use crate::forms::{Level, Number};
+use crate::instructions::{ArithmeticInstruction, Code, Line};
+use crate::iterators::TermIterState;
 
-use crate::machine::heap::*;
-use crate::machine::machine_errors::*;
-use crate::machine::machine_indices::*;
+use crate::machine::heap::Heap;
+use crate::machine::machine_errors::EvalError;
+use crate::machine::machine_indices::{Addr, AllocVarDict, CodeIndex, HeapCellValue, RefOrOwned};
 
-use crate::ordered_float::*;
+use crate::ordered_float::OrderedFloat;
 use crate::rug::ops::PowAssign;
 use crate::rug::{Assign, Integer, Rational};
 
@@ -88,16 +90,15 @@ impl<'a> Iterator for ArithInstructionIterator<'a> {
 
                     if child_num == arity {
                         return Some(Ok(ArithTermRef::Op(ct.name(), arity)));
-                    } else {
-                        self.state_stack.push(TermIterState::Clause(
-                            lvl,
-                            child_num + 1,
-                            cell,
-                            ct,
-                            subterms,
-                        ));
-                        self.push_subterm(lvl, &subterms[child_num]);
                     }
+                    self.state_stack.push(TermIterState::Clause(
+                        lvl,
+                        child_num + 1,
+                        cell,
+                        ct,
+                        subterms,
+                    ));
+                    self.push_subterm(lvl, &subterms[child_num]);
                 }
                 TermIterState::Constant(_, _, c) => return Some(Ok(ArithTermRef::Constant(c))),
                 TermIterState::Var(_, cell, var) => return Some(Ok(ArithTermRef::Var(cell, var))),
@@ -338,7 +339,9 @@ pub fn rnd_i(n: &Number) -> RefOrOwned<Number> {
 // floating point rounding function -- 9.1.4.1.
 pub fn rnd_f(n: &Number) -> f64 {
     match *n {
-        Number::Fixnum(n) => n as f64,
+        Number::Fixnum(n) => {
+            f64::try_from(i32::try_from(n).unwrap_or(i32::MAX)).unwrap_or(f64::MAX)
+        }
         Number::Integer(ref n) => n.to_f64(),
         Number::Float(OrderedFloat(f)) => f,
         Number::Rational(ref r) => r.to_f64(),
@@ -359,7 +362,6 @@ where
     Round: Fn(&Number) -> f64,
 {
     match f.classify() {
-        FpCategory::Normal | FpCategory::Zero => Ok(round(&Number::Float(OrderedFloat(f)))),
         FpCategory::Infinite => {
             let f = round(&Number::Float(OrderedFloat(f)));
 
@@ -376,7 +378,10 @@ where
 
 #[inline]
 fn float_fn_to_f(n: isize) -> Result<f64, EvalError> {
-    classify_float(n as f64, rnd_f)
+    classify_float(
+        f64::try_from(i32::try_from(n).unwrap_or(i32::MAX)).unwrap_or(f64::MAX),
+        rnd_f,
+    )
 }
 
 #[inline]
@@ -413,13 +418,10 @@ impl Add<Number> for Number {
 
     fn add(self, rhs: Number) -> Self::Output {
         match (self, rhs) {
-            (Number::Fixnum(n1), Number::Fixnum(n2)) => {
-                Ok(if let Some(result) = n1.checked_add(n2) {
-                    Number::Fixnum(result)
-                } else {
-                    Number::from(Integer::from(n1) + Integer::from(n2))
-                })
-            }
+            (Number::Fixnum(n1), Number::Fixnum(n2)) => Ok(n1.checked_add(n2).map_or_else(
+                || Number::from(Integer::from(n1) + Integer::from(n2)),
+                Number::Fixnum,
+            )),
             (Number::Fixnum(n1), Number::Integer(n2))
             | (Number::Integer(n2), Number::Fixnum(n1)) => {
                 Ok(Number::from(Integer::from(n1) + &*n2))
@@ -462,13 +464,9 @@ impl Neg for Number {
 
     fn neg(self) -> Self::Output {
         match self {
-            Number::Fixnum(n) => {
-                if let Some(n) = n.checked_neg() {
-                    Number::Fixnum(n)
-                } else {
-                    Number::from(-Integer::from(n))
-                }
-            }
+            Number::Fixnum(n) => n
+                .checked_neg()
+                .map_or_else(|| Number::from(-Integer::from(n)), Number::Fixnum),
             Number::Integer(n) => Number::Integer(Rc::new(-Integer::from(&*n))),
             Number::Float(OrderedFloat(f)) => Number::Float(OrderedFloat(-f)),
             Number::Rational(r) => Number::Rational(Rc::new(-Rational::from(&*r))),
@@ -489,13 +487,10 @@ impl Mul<Number> for Number {
 
     fn mul(self, rhs: Number) -> Self::Output {
         match (self, rhs) {
-            (Number::Fixnum(n1), Number::Fixnum(n2)) => {
-                Ok(if let Some(result) = n1.checked_mul(n2) {
-                    Number::Fixnum(result)
-                } else {
-                    Number::from(Integer::from(n1) * Integer::from(n2))
-                })
-            }
+            (Number::Fixnum(n1), Number::Fixnum(n2)) => Ok(n1.checked_mul(n2).map_or_else(
+                || Number::from(Integer::from(n1) * Integer::from(n2)),
+                Number::Fixnum,
+            )),
             (Number::Fixnum(n1), Number::Integer(n2))
             | (Number::Integer(n2), Number::Fixnum(n1)) => {
                 Ok(Number::from(Integer::from(n1) * &*n2))
@@ -607,8 +602,13 @@ impl PartialEq for Number {
             (&Number::Integer(ref n1), &Number::Fixnum(n2)) => (&**n1).eq(&n2),
             (&Number::Fixnum(n1), &Number::Rational(ref n2)) => n1.eq(&**n2),
             (&Number::Rational(ref n1), &Number::Fixnum(n2)) => (&**n1).eq(&n2),
-            (&Number::Fixnum(n1), &Number::Float(n2)) => OrderedFloat(n1 as f64).eq(&n2),
-            (&Number::Float(n1), &Number::Fixnum(n2)) => n1.eq(&OrderedFloat(n2 as f64)),
+            (&Number::Fixnum(n1), &Number::Float(n2)) => OrderedFloat(
+                f64::try_from(i32::try_from(n1).unwrap_or(i32::MAX)).unwrap_or(f64::MAX),
+            )
+            .eq(&n2),
+            (&Number::Float(n1), &Number::Fixnum(n2)) => n1.eq(&OrderedFloat(
+                f64::try_from(i32::try_from(n2).unwrap_or(i32::MAX)).unwrap_or(f64::MAX),
+            )),
             (&Number::Integer(ref n1), &Number::Integer(ref n2)) => n1.eq(n2),
             (&Number::Integer(ref n1), Number::Float(n2)) => OrderedFloat(n1.to_f64()).eq(&n2),
             (&Number::Float(n1), &Number::Integer(ref n2)) => n1.eq(&OrderedFloat(n2.to_f64())),
@@ -656,8 +656,13 @@ impl Ord for Number {
             (Number::Integer(n1), &Number::Fixnum(n2)) => (&**n1).cmp(&Integer::from(n2)),
             (&Number::Fixnum(n1), Number::Rational(n2)) => Rational::from(n1).cmp(&*n2),
             (Number::Rational(n1), &Number::Fixnum(n2)) => (&**n1).cmp(&Rational::from(n2)),
-            (&Number::Fixnum(n1), &Number::Float(n2)) => OrderedFloat(n1 as f64).cmp(&n2),
-            (&Number::Float(n1), &Number::Fixnum(n2)) => n1.cmp(&OrderedFloat(n2 as f64)),
+            (&Number::Fixnum(n1), &Number::Float(n2)) => OrderedFloat(
+                f64::try_from(i32::try_from(n1).unwrap_or(i32::MAX)).unwrap_or(f64::MAX),
+            )
+            .cmp(&n2),
+            (&Number::Float(n1), &Number::Fixnum(n2)) => n1.cmp(&OrderedFloat(
+                f64::try_from(i32::try_from(n2).unwrap_or(i32::MAX)).unwrap_or(f64::MAX),
+            )),
             (&Number::Integer(ref n1), &Number::Integer(ref n2)) => n1.cmp(n2),
             (&Number::Integer(ref n1), Number::Float(n2)) => OrderedFloat(n1.to_f64()).cmp(&n2),
             (&Number::Float(n1), &Number::Integer(ref n2)) => n1.cmp(&OrderedFloat(n2.to_f64())),

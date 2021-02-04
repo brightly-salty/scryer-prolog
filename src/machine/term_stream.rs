@@ -1,9 +1,12 @@
+use crate::forms::{OpDecl, PredicateClause};
+use crate::machine::loader::{Loader, RetractionInfo};
 use crate::prolog_parser_rebis::ast::*;
 use crate::prolog_parser_rebis::parser::*;
 
 use crate::machine::machine_errors::CompilationError;
 use crate::machine::preprocessor::*;
 use crate::machine::*;
+use crate::read::PrologStream;
 
 use indexmap::IndexSet;
 

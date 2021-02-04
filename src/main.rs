@@ -1,5 +1,9 @@
-#![deny(clippy::all)]
-#![allow(clippy::too_many_arguments)]
+#![deny(clippy::all, clippy::pedantic)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::module_name_repetitions
+)]
 
 extern crate blake2;
 extern crate chrono;
@@ -53,7 +57,7 @@ mod read;
 mod targets;
 mod write;
 
-use machine::streams::*;
+use machine::streams::Stream;
 use machine::*;
 use read::*;
 

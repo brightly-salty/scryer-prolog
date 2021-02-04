@@ -1,11 +1,20 @@
-use crate::codegen::*;
-use crate::debray_allocator::*;
+use crate::codegen::{CodeGenSettings, CodeGenerator};
+use crate::debray_allocator::DebrayAllocator;
+use crate::forms::{ClauseIndexInfo, OptArgIndexKey, PredicateClause, PredicateSkeleton, TopLevel};
 use crate::indexing::{merge_clause_index, remove_index};
+use crate::instructions::{
+    to_indexing_line_mut, ChoiceInstruction, Code, ControlInstruction, IndexingInstruction,
+    IndexingLine,
+};
 use crate::machine::load_state::set_code_index;
 use crate::machine::load_state::LoadState;
-use crate::machine::loader::*;
-use crate::machine::term_stream::*;
-use crate::machine::*;
+use crate::machine::loader::{CompilationTarget, Loader, RetractionInfo, RetractionRecord};
+use crate::machine::machine_indices::{CodeIndex, IndexPtr};
+use crate::machine::term_stream::{BootstrappingTermStream, TermStream};
+use crate::machine::{
+    mem, parsing_stream, AppendOrPrepend, Atom, ClauseName, CompilationError, Line, ListingSource,
+    Machine, PredicateKey, SessionError, Stream, TabledData, Term,
+};
 
 use slice_deque::sdeq;
 
@@ -55,7 +64,7 @@ pub(super) fn compile_appendix(
     queue: &VecDeque<TopLevel>,
     jmp_by_locs: Vec<usize>,
     non_counted_bt: bool,
-    atom_tbl: TabledData<Atom>,
+    atom_tbl: &TabledData<Atom>,
 ) -> Result<(), CompilationError> {
     let mut jmp_by_locs = VecDeque::from(jmp_by_locs);
 
@@ -107,9 +116,9 @@ fn lower_bound_of_target_clause(skeleton: &PredicateSkeleton, target_pos: usize)
 
 fn compile_standalone_clause(
     clause: PredicateClause,
-    queue: VecDeque<TopLevel>,
+    queue: &VecDeque<TopLevel>,
     settings: CodeGenSettings,
-    atom_tbl: TabledData<Atom>,
+    atom_tbl: &TabledData<Atom>,
 ) -> Result<StandaloneCompileResult, SessionError> {
     let mut cg = CodeGenerator::<DebrayAllocator>::new(atom_tbl.clone(), settings);
     let mut clause_code = cg.compile_predicate(&[clause])?;
@@ -119,7 +128,7 @@ fn compile_standalone_clause(
         &queue,
         cg.jmp_by_locs,
         settings.non_counted_bt,
-        atom_tbl,
+        &atom_tbl,
     )?;
 
     Ok(StandaloneCompileResult {
@@ -169,7 +178,7 @@ fn merge_indices(
 
             merge_clause_index(
                 target_indexing_line,
-                &mut skeleton[0..clause_index + 1],
+                &mut skeleton[0..=clause_index],
                 clause_loc,
                 AppendOrPrepend::Append,
             );
@@ -191,15 +200,14 @@ fn find_inner_choice_instr(code: &[Line], mut index: usize, index_loc: usize) ->
             | Line::Choice(ChoiceInstruction::RetryMeElse(o)) => {
                 if *o > 0 {
                     return index;
-                } else {
-                    index = index_loc;
                 }
+                index = index_loc;
             }
             Line::Choice(ChoiceInstruction::TrustMe(_)) => {
                 return index;
             }
             Line::IndexingCode(indexing_code) => match &indexing_code[0] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, v, ..)) => {
+                IndexingLine::Indexing(IndexingInstruction::Term(_, v, ..)) => {
                     index += v;
                 }
                 _ => {
@@ -396,7 +404,7 @@ fn set_switch_var_offset_to_choice_instr(
     let target_indexing_line = to_indexing_line_mut(&mut code[index_loc]).unwrap();
 
     let v = match &mut target_indexing_line[0] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, v, ..)) => *v,
+        IndexingLine::Indexing(IndexingInstruction::Term(_, v, ..)) => *v,
         _ => {
             unreachable!();
         }
@@ -420,7 +428,7 @@ fn set_switch_var_offset(
     let target_indexing_line = to_indexing_line_mut(&mut code[index_loc]).unwrap();
 
     let old_v = match &mut target_indexing_line[0] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, ref mut v, ..)) => {
+        IndexingLine::Indexing(IndexingInstruction::Term(_, ref mut v, ..)) => {
             mem::replace(v, offset)
         }
         _ => {
@@ -566,9 +574,9 @@ fn remove_non_leading_clause(
 
 fn finalize_retract(
     key: PredicateKey,
-    compilation_target: CompilationTarget,
+    compilation_target: &CompilationTarget,
     skeleton: &mut PredicateSkeleton,
-    code_index: CodeIndex,
+    code_index: &CodeIndex,
     target_pos: usize,
     index_ptr_opt: Option<IndexPtr>,
     retraction_info: &mut RetractionInfo,
@@ -626,6 +634,7 @@ fn remove_leading_unindexed_clause(
     }
 }
 
+#[allow(clippy::option_if_let_else)]
 fn prepend_compiled_clause(
     code: &mut Code,
     compilation_target: CompilationTarget,
@@ -690,37 +699,34 @@ fn prepend_compiled_clause(
                 )));
 
                 let outer_thread_choice_offset = // outer_thread_choice_loc WAS index_loc - 1..
-                    match derelictize_try_me_else(code, outer_thread_choice_loc, retraction_info) {
-                        Some(next_subseq_offset) => {
-                            // skeleton.clauses[1] has a non-stub TryMeElse.
+                    if let Some(next_subseq_offset) = derelictize_try_me_else(code, outer_thread_choice_loc, retraction_info) {
+                        // skeleton.clauses[1] has a non-stub TryMeElse.
 
-                            let outer_thread_rev_offset =
-                                prepend_queue.len() + 1 + clause_loc - outer_thread_choice_loc -
-                                next_subseq_offset;
+                        let outer_thread_rev_offset =
+                            prepend_queue.len() + 1 + clause_loc - outer_thread_choice_loc -
+                            next_subseq_offset;
 
-                            prepend_queue.push_back(
-                                Line::Control(ControlInstruction::RevJmpBy(outer_thread_rev_offset))
-                            );
+                        prepend_queue.push_back(
+                            Line::Control(ControlInstruction::RevJmpBy(outer_thread_rev_offset))
+                        );
 
-                            prepend_queue.len()
-                        }
-                        None => {
-                            // This case occurs when the clauses of
-                            // the host predicate, up to and including
-                            // the prepending of this clause, are
-                            // indexed.
+                        prepend_queue.len()
+                    } else {
+                        // This case occurs when the clauses of
+                        // the host predicate, up to and including
+                        // the prepending of this clause, are
+                        // indexed.
 
-                            // The outer TryMeElse / RevJmpBy pushed
-                            // in this case are stub instructions
-                            // awaiting the addition of unindexed
-                            // clauses.
+                        // The outer TryMeElse / RevJmpBy pushed
+                        // in this case are stub instructions
+                        // awaiting the addition of unindexed
+                        // clauses.
 
-                            prepend_queue.push_back(
-                                Line::Control(ControlInstruction::RevJmpBy(0)),
-                            );
+                        prepend_queue.push_back(
+                            Line::Control(ControlInstruction::RevJmpBy(0)),
+                        );
 
-                            0
-                        }
+                        0
                     };
 
                 prepend_queue.push_front(Line::Choice(ChoiceInstruction::TryMeElse(
@@ -804,69 +810,66 @@ fn prepend_compiled_clause(
                 clause_loc // + (outer_thread_choice_offset == 0 as usize)
             }
         }
+    } else if skeleton.clauses[1]
+        .opt_arg_index_key
+        .switch_on_term_loc()
+        .is_some()
+    {
+        prepend_queue.extend(clause_code.drain(1..));
+
+        let old_clause_start = skeleton.clauses[1].clause_start - 2;
+
+        let inner_thread_rev_offset = 1 + prepend_queue.len() + clause_loc - old_clause_start;
+
+        prepend_queue.push_back(Line::Control(ControlInstruction::RevJmpBy(
+            inner_thread_rev_offset,
+        )));
+
+        prepend_queue.push_front(Line::Choice(ChoiceInstruction::TryMeElse(
+            prepend_queue.len(),
+        )));
+
+        // prepend_queue is now:
+        //      | TryMeElse(N_2)
+        //      | (clause_code)
+        // +N_2 | RevJmpBy (RetryMeElse(M_1))
+
+        internalize_choice_instr_at(code, old_clause_start, retraction_info);
+
+        code.extend(prepend_queue.into_iter());
+
+        // skeleton.clauses[0].opt_arg_index_key += clause_loc;
+        skeleton.clauses[0].clause_start = clause_loc;
+
+        clause_loc // + (outer_thread_choice_offset == 0 as usize)
     } else {
-        match skeleton.clauses[1].opt_arg_index_key.switch_on_term_loc() {
-            Some(_) => {
-                prepend_queue.extend(clause_code.drain(1..));
+        prepend_queue.extend(clause_code.drain(1..));
 
-                let old_clause_start = skeleton.clauses[1].clause_start - 2;
+        let old_clause_start = skeleton.clauses[1].clause_start;
 
-                let inner_thread_rev_offset =
-                    1 + prepend_queue.len() + clause_loc - old_clause_start;
+        let inner_thread_rev_offset = 1 + prepend_queue.len() + clause_loc - old_clause_start;
 
-                prepend_queue.push_back(Line::Control(ControlInstruction::RevJmpBy(
-                    inner_thread_rev_offset,
-                )));
+        prepend_queue.push_back(Line::Control(ControlInstruction::RevJmpBy(
+            inner_thread_rev_offset,
+        )));
 
-                prepend_queue.push_front(Line::Choice(ChoiceInstruction::TryMeElse(
-                    prepend_queue.len(),
-                )));
+        prepend_queue.push_front(Line::Choice(ChoiceInstruction::TryMeElse(
+            prepend_queue.len(),
+        )));
 
-                // prepend_queue is now:
-                //      | TryMeElse(N_2)
-                //      | (clause_code)
-                // +N_2 | RevJmpBy (RetryMeElse(M_1))
+        // prepend_queue is now:
+        //      | TryMeElse(N_2)
+        //      | (clause_code)
+        // +N_2 | RevJmpBy (RetryMeElse(M_1))
 
-                internalize_choice_instr_at(code, old_clause_start, retraction_info);
+        internalize_choice_instr_at(code, old_clause_start, retraction_info);
 
-                code.extend(prepend_queue.into_iter());
+        code.extend(prepend_queue.into_iter());
 
-                // skeleton.clauses[0].opt_arg_index_key += clause_loc;
-                skeleton.clauses[0].clause_start = clause_loc;
+        // skeleton.clauses[0].opt_arg_index_key += clause_loc;
+        skeleton.clauses[0].clause_start = clause_loc;
 
-                clause_loc // + (outer_thread_choice_offset == 0 as usize)
-            }
-            None => {
-                prepend_queue.extend(clause_code.drain(1..));
-
-                let old_clause_start = skeleton.clauses[1].clause_start;
-
-                let inner_thread_rev_offset =
-                    1 + prepend_queue.len() + clause_loc - old_clause_start;
-
-                prepend_queue.push_back(Line::Control(ControlInstruction::RevJmpBy(
-                    inner_thread_rev_offset,
-                )));
-
-                prepend_queue.push_front(Line::Choice(ChoiceInstruction::TryMeElse(
-                    prepend_queue.len(),
-                )));
-
-                // prepend_queue is now:
-                //      | TryMeElse(N_2)
-                //      | (clause_code)
-                // +N_2 | RevJmpBy (RetryMeElse(M_1))
-
-                internalize_choice_instr_at(code, old_clause_start, retraction_info);
-
-                code.extend(prepend_queue.into_iter());
-
-                // skeleton.clauses[0].opt_arg_index_key += clause_loc;
-                skeleton.clauses[0].clause_start = clause_loc;
-
-                clause_loc // + (outer_thread_choice_offset == 0 as usize)
-            }
-        }
+        clause_loc // + (outer_thread_choice_offset == 0 as usize)
     }
 }
 
@@ -934,36 +937,34 @@ fn append_compiled_clause(
             skeleton.clauses[target_pos].opt_arg_index_key += clause_loc;
             code.extend(clause_code.drain(1..));
 
-            match skeleton.clauses[lower_bound]
+            if skeleton.clauses[lower_bound]
                 .opt_arg_index_key
                 .switch_on_term_loc()
+                .is_some()
             {
-                Some(_) => {
-                    if lower_bound == 0 {
-                        code_ptr_opt = Some(skeleton.clauses[lower_bound].clause_start - 2);
-                    }
-
-                    skeleton.clauses[lower_bound].clause_start - 2
+                if lower_bound == 0 {
+                    code_ptr_opt = Some(skeleton.clauses[lower_bound].clause_start - 2);
                 }
-                None => {
-                    if lower_bound == 0 {
-                        code_ptr_opt = Some(skeleton.clauses[lower_bound].clause_start);
-                    }
 
-                    if let Some(index_loc) = skeleton.clauses[target_pos]
-                        .opt_arg_index_key
-                        .switch_on_term_loc()
-                    {
-                        // point to the inner-threaded TryMeElse(0) if target_pos is
-                        // indexed, and make switch_on_term point one line after it in
-                        // its variable offset.
-                        skeleton.clauses[target_pos].clause_start += 2;
-
-                        set_switch_var_offset(code, index_loc, 2, retraction_info);
-                    }
-
-                    skeleton.clauses[lower_bound].clause_start
+                skeleton.clauses[lower_bound].clause_start - 2
+            } else {
+                if lower_bound == 0 {
+                    code_ptr_opt = Some(skeleton.clauses[lower_bound].clause_start);
                 }
+
+                if let Some(index_loc) = skeleton.clauses[target_pos]
+                    .opt_arg_index_key
+                    .switch_on_term_loc()
+                {
+                    // point to the inner-threaded TryMeElse(0) if target_pos is
+                    // indexed, and make switch_on_term point one line after it in
+                    // its variable offset.
+                    skeleton.clauses[target_pos].clause_start += 2;
+
+                    set_switch_var_offset(code, index_loc, 2, retraction_info);
+                }
+
+                skeleton.clauses[lower_bound].clause_start
             }
         }
     };
@@ -1013,7 +1014,7 @@ impl<'a> LoadState<'a> {
             queue,
             cg.jmp_by_locs,
             settings.non_counted_bt,
-            self.wam.machine_st.atom_tbl.clone(),
+            &self.wam.machine_st.atom_tbl.clone(),
         )?;
 
         if settings.is_extensible {
@@ -1093,7 +1094,7 @@ impl<'a> LoadState<'a> {
         &mut self,
         key: PredicateKey,
         clause: PredicateClause,
-        queue: VecDeque<TopLevel>,
+        queue: &VecDeque<TopLevel>,
         non_counted_bt: bool,
         append_or_prepend: AppendOrPrepend,
     ) -> Result<IndexPtr, SessionError> {
@@ -1118,7 +1119,7 @@ impl<'a> LoadState<'a> {
         let StandaloneCompileResult {
             clause_code,
             mut standalone_skeleton,
-        } = compile_standalone_clause(clause, queue, settings, atom_tbl)?;
+        } = compile_standalone_clause(clause, &queue, settings, &atom_tbl)?;
 
         match append_or_prepend {
             AppendOrPrepend::Append => {
@@ -1188,6 +1189,7 @@ impl<'a> LoadState<'a> {
         }
     }
 
+    #[allow(clippy::option_if_let_else)]
     pub(super) fn retract_clause(&mut self, key: PredicateKey, target_pos: usize) -> usize {
         let code_index = self.get_or_insert_code_index(key.clone());
 
@@ -1226,71 +1228,68 @@ impl<'a> LoadState<'a> {
                     &mut self.retraction_info,
                 );
 
-                match derelictize_try_me_else(code, inner_clause_start, &mut self.retraction_info) {
-                    Some(offset) => {
-                        let instr_loc =
-                            find_inner_choice_instr(code, inner_clause_start + offset, index_loc);
+                if let Some(offset) =
+                    derelictize_try_me_else(code, inner_clause_start, &mut self.retraction_info)
+                {
+                    let instr_loc =
+                        find_inner_choice_instr(code, inner_clause_start + offset, index_loc);
 
-                        let clause_loc =
-                            blunt_leading_choice_instr(code, instr_loc, &mut self.retraction_info);
+                    let clause_loc =
+                        blunt_leading_choice_instr(code, instr_loc, &mut self.retraction_info);
 
-                        set_switch_var_offset(
-                            code,
-                            index_loc,
-                            clause_loc - index_loc,
-                            &mut self.retraction_info,
-                        );
+                    set_switch_var_offset(
+                        code,
+                        index_loc,
+                        clause_loc - index_loc,
+                        &mut self.retraction_info,
+                    );
 
-                        self.retraction_info.push_record(
-                            RetractionRecord::SkeletonClauseStartReplaced(
-                                self.compilation_target.clone(),
-                                key.clone(),
-                                target_pos + 1,
-                                skeleton.clauses[target_pos + 1].clause_start,
-                            ),
-                        );
-
-                        skeleton.clauses[target_pos + 1].clause_start =
-                            skeleton.clauses[target_pos].clause_start;
-
-                        return delete_from_dynamic_skeleton(
+                    self.retraction_info.push_record(
+                        RetractionRecord::SkeletonClauseStartReplaced(
                             self.compilation_target.clone(),
-                            key,
-                            skeleton,
-                            target_pos,
-                            &mut self.retraction_info,
-                        );
-                    }
-                    None => {
-                        let index_ptr_opt = if target_pos > 0 {
-                            let preceding_choice_instr_loc =
-                                skeleton.clauses[target_pos - 1].clause_start;
+                            key.clone(),
+                            target_pos + 1,
+                            skeleton.clauses[target_pos + 1].clause_start,
+                        ),
+                    );
 
-                            remove_non_leading_clause(
-                                code,
-                                preceding_choice_instr_loc,
-                                skeleton.clauses[target_pos].clause_start - 2,
-                                &mut self.retraction_info,
-                            )
-                        } else {
-                            Some(remove_leading_unindexed_clause(
-                                code,
-                                skeleton.clauses[target_pos].clause_start - 2,
-                                &mut self.retraction_info,
-                            ))
-                        };
+                    skeleton.clauses[target_pos + 1].clause_start =
+                        skeleton.clauses[target_pos].clause_start;
 
-                        return finalize_retract(
-                            key,
-                            self.compilation_target.clone(),
-                            skeleton,
-                            code_index,
-                            target_pos,
-                            index_ptr_opt,
-                            &mut self.retraction_info,
-                        );
-                    }
+                    return delete_from_dynamic_skeleton(
+                        self.compilation_target.clone(),
+                        key,
+                        skeleton,
+                        target_pos,
+                        &mut self.retraction_info,
+                    );
                 }
+                let index_ptr_opt = if target_pos > 0 {
+                    let preceding_choice_instr_loc = skeleton.clauses[target_pos - 1].clause_start;
+
+                    remove_non_leading_clause(
+                        code,
+                        preceding_choice_instr_loc,
+                        skeleton.clauses[target_pos].clause_start - 2,
+                        &mut self.retraction_info,
+                    )
+                } else {
+                    Some(remove_leading_unindexed_clause(
+                        code,
+                        skeleton.clauses[target_pos].clause_start - 2,
+                        &mut self.retraction_info,
+                    ))
+                };
+
+                return finalize_retract(
+                    key,
+                    &self.compilation_target.clone(),
+                    skeleton,
+                    &code_index,
+                    target_pos,
+                    index_ptr_opt,
+                    &mut self.retraction_info,
+                );
             }
         }
 
@@ -1390,52 +1389,49 @@ impl<'a> LoadState<'a> {
                         &mut self.retraction_info,
                     );
 
-                    match skeleton.clauses[target_pos]
+                    if let Some(index_loc) = skeleton.clauses[target_pos]
                         .opt_arg_index_key
                         .switch_on_term_loc()
                     {
-                        Some(index_loc) => {
-                            let preceding_choice_instr_loc = find_inner_choice_instr(
+                        let preceding_choice_instr_loc = find_inner_choice_instr(
+                            code,
+                            skeleton.clauses[target_pos - 1].clause_start,
+                            index_loc,
+                        );
+
+                        remove_non_leading_clause(
+                            code,
+                            preceding_choice_instr_loc,
+                            skeleton.clauses[target_pos].clause_start,
+                            &mut self.retraction_info,
+                        );
+
+                        if let Line::Choice(ChoiceInstruction::TryMeElse(0)) =
+                            &mut code[preceding_choice_instr_loc]
+                        {
+                            set_switch_var_offset(
                                 code,
-                                skeleton.clauses[target_pos - 1].clause_start,
                                 index_loc,
-                            );
-
-                            remove_non_leading_clause(
-                                code,
-                                preceding_choice_instr_loc,
-                                skeleton.clauses[target_pos].clause_start,
+                                preceding_choice_instr_loc + 1 - index_loc,
                                 &mut self.retraction_info,
                             );
-
-                            if let Line::Choice(ChoiceInstruction::TryMeElse(0)) =
-                                &mut code[preceding_choice_instr_loc]
-                            {
-                                set_switch_var_offset(
-                                    code,
-                                    index_loc,
-                                    preceding_choice_instr_loc + 1 - index_loc,
-                                    &mut self.retraction_info,
-                                );
-                            }
-
-                            None
                         }
-                        None => {
-                            let preceding_choice_instr_loc =
-                                if skeleton.clauses[lower_bound].opt_arg_index_key.is_some() {
-                                    skeleton.clauses[lower_bound].clause_start - 2
-                                } else {
-                                    skeleton.clauses[lower_bound].clause_start
-                                };
 
-                            remove_non_leading_clause(
-                                code,
-                                preceding_choice_instr_loc,
-                                skeleton.clauses[target_pos].clause_start,
-                                &mut self.retraction_info,
-                            )
-                        }
+                        None
+                    } else {
+                        let preceding_choice_instr_loc =
+                            if skeleton.clauses[lower_bound].opt_arg_index_key.is_some() {
+                                skeleton.clauses[lower_bound].clause_start - 2
+                            } else {
+                                skeleton.clauses[lower_bound].clause_start
+                            };
+
+                        remove_non_leading_clause(
+                            code,
+                            preceding_choice_instr_loc,
+                            skeleton.clauses[target_pos].clause_start,
+                            &mut self.retraction_info,
+                        )
                     }
                 } else {
                     Some(remove_leading_unindexed_clause(
@@ -1449,9 +1445,9 @@ impl<'a> LoadState<'a> {
 
         finalize_retract(
             key,
-            self.compilation_target.clone(),
+            &self.compilation_target.clone(),
             skeleton,
-            code_index,
+            &code_index,
             target_pos,
             index_ptr_opt,
             &mut self.retraction_info,
@@ -1462,7 +1458,7 @@ impl<'a> LoadState<'a> {
 impl<'a, TS: TermStream> Loader<'a, TS> {
     pub(super) fn compile_clause_clauses<ClauseIter: Iterator<Item = (Term, Term)>>(
         &mut self,
-        key: PredicateKey,
+        key: &PredicateKey,
         clause_clauses: ClauseIter,
         append_or_prepend: AppendOrPrepend,
     ) -> Result<(), SessionError> {
@@ -1488,7 +1484,7 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
             let result = self.load_state.incremental_compile_clause(
                 (clause_name!("$clause"), 2),
                 clause_predicate,
-                VecDeque::new(),
+                &VecDeque::new(),
                 false, // non_counted_bt is false.
                 append_or_prepend,
             );
@@ -1588,7 +1584,7 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
 
         if is_dynamic {
             let iter = mem::replace(&mut self.clause_clauses, vec![]).into_iter();
-            self.compile_clause_clauses(key, iter, AppendOrPrepend::Append)?;
+            self.compile_clause_clauses(&key, iter, AppendOrPrepend::Append)?;
         }
         self.predicates.clear();
         Ok(())

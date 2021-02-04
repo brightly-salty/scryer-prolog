@@ -1,8 +1,8 @@
-use crate::prolog_parser_rebis::ast::*;
-use crate::prolog_parser_rebis::tabled_rc::*;
+use crate::prolog_parser_rebis::ast::{Atom, ClauseName, Constant, Term};
+use crate::prolog_parser_rebis::tabled_rc::{TabledData, TabledRc};
 
-use crate::forms::*;
-use crate::instructions::*;
+use crate::forms::{AppendOrPrepend, ClauseIndexInfo, OptArgIndexKey, PredicateKey};
+use crate::instructions::{IndexedChoiceInstruction, IndexingInstruction, IndexingLine};
 
 use crate::indexmap::IndexMap;
 use crate::rug::Integer;
@@ -110,18 +110,20 @@ impl<'a> IndexingCodeMergingPtr<'a> {
         }
 
         if let IndexingCodePtr::Internal(_) = constant_ptr {
-            self.indexing_code.push(IndexingLine::Indexing(
-                IndexingInstruction::SwitchOnConstant(constants),
-            ));
+            self.indexing_code
+                .push(IndexingLine::Indexing(IndexingInstruction::Constant(
+                    constants,
+                )));
 
             let last_index = self.indexing_code.len() - 1;
             self.indexing_code.swap(self.offset, last_index);
         } else {
             self.offset = self.indexing_code.len();
 
-            self.indexing_code.push(IndexingLine::Indexing(
-                IndexingInstruction::SwitchOnConstant(constants),
-            ));
+            self.indexing_code
+                .push(IndexingLine::Indexing(IndexingInstruction::Constant(
+                    constants,
+                )));
         }
     }
 
@@ -148,7 +150,7 @@ impl<'a> IndexingCodeMergingPtr<'a> {
             .push(IndexingLine::IndexedChoice(third_level_index));
 
         match &mut self.indexing_code[self.offset] {
-            IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(ref mut constants)) => {
+            IndexingLine::Indexing(IndexingInstruction::Constant(ref mut constants)) => {
                 constants.insert(
                     constant,
                     IndexingCodePtr::Internal(indexing_code_len - self.offset),
@@ -188,7 +190,7 @@ impl<'a> IndexingCodeMergingPtr<'a> {
             let indexing_code_len = self.indexing_code.len();
 
             match &mut self.indexing_code[self.offset] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, _, ref mut c, ..)) => {
+                IndexingLine::Indexing(IndexingInstruction::Term(_, _, ref mut c, ..)) => {
                     match *c {
                         IndexingCodePtr::Fail => {
                             *c = IndexingCodePtr::External(index);
@@ -201,7 +203,7 @@ impl<'a> IndexingCodeMergingPtr<'a> {
                             *c = IndexingCodePtr::Internal(indexing_code_len);
 
                             self.indexing_code.push(IndexingLine::Indexing(
-                                IndexingInstruction::SwitchOnConstant(constants),
+                                IndexingInstruction::Constant(constants),
                             ));
 
                             self.offset = indexing_code_len;
@@ -211,7 +213,7 @@ impl<'a> IndexingCodeMergingPtr<'a> {
                         }
                     }
                 }
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(constants)) => {
+                IndexingLine::Indexing(IndexingInstruction::Constant(constants)) => {
                     match constants.get(&overlapping_constant).cloned() {
                         None | Some(IndexingCodePtr::Fail) => {
                             constants
@@ -245,7 +247,7 @@ impl<'a> IndexingCodeMergingPtr<'a> {
             let indexing_code_len = self.indexing_code.len();
 
             match &mut self.indexing_code[self.offset] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, _, ref mut c, ..)) => {
+                IndexingLine::Indexing(IndexingInstruction::Term(_, _, ref mut c, ..)) => {
                     match *c {
                         IndexingCodePtr::Fail => {
                             *c = IndexingCodePtr::External(index);
@@ -260,7 +262,7 @@ impl<'a> IndexingCodeMergingPtr<'a> {
                         }
                     }
                 }
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(constants)) => {
+                IndexingLine::Indexing(IndexingInstruction::Constant(constants)) => {
                     match constants.get(&constant).cloned() {
                         None | Some(IndexingCodePtr::Fail) => {
                             constants.insert(constant, IndexingCodePtr::External(index));
@@ -307,18 +309,20 @@ impl<'a> IndexingCodeMergingPtr<'a> {
         }
 
         if let IndexingCodePtr::Internal(_) = structure_ptr {
-            self.indexing_code.push(IndexingLine::Indexing(
-                IndexingInstruction::SwitchOnStructure(structures),
-            ));
+            self.indexing_code
+                .push(IndexingLine::Indexing(IndexingInstruction::Structure(
+                    structures,
+                )));
 
             let last_index = self.indexing_code.len() - 1;
             self.indexing_code.swap(self.offset, last_index);
         } else {
             self.offset = self.indexing_code.len();
 
-            self.indexing_code.push(IndexingLine::Indexing(
-                IndexingInstruction::SwitchOnStructure(structures),
-            ));
+            self.indexing_code
+                .push(IndexingLine::Indexing(IndexingInstruction::Structure(
+                    structures,
+                )));
         }
     }
 
@@ -345,7 +349,7 @@ impl<'a> IndexingCodeMergingPtr<'a> {
             .push(IndexingLine::IndexedChoice(third_level_index));
 
         match &mut self.indexing_code[self.offset] {
-            IndexingLine::Indexing(IndexingInstruction::SwitchOnStructure(ref mut structures)) => {
+            IndexingLine::Indexing(IndexingInstruction::Structure(ref mut structures)) => {
                 structures.insert(
                     key,
                     IndexingCodePtr::Internal(indexing_code_len - self.offset),
@@ -362,26 +366,22 @@ impl<'a> IndexingCodeMergingPtr<'a> {
             let indexing_code_len = self.indexing_code.len();
 
             match &mut self.indexing_code[self.offset] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
-                    _,
-                    _,
-                    _,
-                    _,
-                    ref mut s,
-                )) => match *s {
-                    IndexingCodePtr::Fail => {
-                        *s = IndexingCodePtr::External(index);
-                        break;
+                IndexingLine::Indexing(IndexingInstruction::Term(_, _, _, _, ref mut s)) => {
+                    match *s {
+                        IndexingCodePtr::Fail => {
+                            *s = IndexingCodePtr::External(index);
+                            break;
+                        }
+                        IndexingCodePtr::External(o) => {
+                            *s = IndexingCodePtr::Internal(indexing_code_len - self.offset);
+                            self.internalize_structure(IndexingCodePtr::External(o));
+                        }
+                        IndexingCodePtr::Internal(o) => {
+                            self.offset += o;
+                        }
                     }
-                    IndexingCodePtr::External(o) => {
-                        *s = IndexingCodePtr::Internal(indexing_code_len - self.offset);
-                        self.internalize_structure(IndexingCodePtr::External(o));
-                    }
-                    IndexingCodePtr::Internal(o) => {
-                        self.offset += o;
-                    }
-                },
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnStructure(structures)) => {
+                }
+                IndexingLine::Indexing(IndexingInstruction::Structure(structures)) => {
                     match structures.get(&key).cloned() {
                         None | Some(IndexingCodePtr::Fail) => {
                             structures.insert(key, IndexingCodePtr::External(index));
@@ -416,35 +416,33 @@ impl<'a> IndexingCodeMergingPtr<'a> {
         let indexing_code_len = self.indexing_code.len();
 
         match &mut self.indexing_code[self.offset] {
-            IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, _, _, ref mut l, _)) => {
-                match *l {
-                    IndexingCodePtr::Fail => {
-                        *l = IndexingCodePtr::External(index);
-                    }
-                    IndexingCodePtr::External(o) => {
-                        *l = IndexingCodePtr::Internal(indexing_code_len - self.offset);
-
-                        let third_level_index = if self.append_or_prepend.is_append() {
-                            sdeq![
-                                IndexedChoiceInstruction::Try(o),
-                                IndexedChoiceInstruction::Trust(index)
-                            ]
-                        } else {
-                            sdeq![
-                                IndexedChoiceInstruction::Try(index),
-                                IndexedChoiceInstruction::Trust(o)
-                            ]
-                        };
-
-                        self.indexing_code
-                            .push(IndexingLine::IndexedChoice(third_level_index));
-                    }
-                    IndexingCodePtr::Internal(o) => {
-                        self.offset += o;
-                        self.extend_indexed_choice(index);
-                    }
+            IndexingLine::Indexing(IndexingInstruction::Term(_, _, _, ref mut l, _)) => match *l {
+                IndexingCodePtr::Fail => {
+                    *l = IndexingCodePtr::External(index);
                 }
-            }
+                IndexingCodePtr::External(o) => {
+                    *l = IndexingCodePtr::Internal(indexing_code_len - self.offset);
+
+                    let third_level_index = if self.append_or_prepend.is_append() {
+                        sdeq![
+                            IndexedChoiceInstruction::Try(o),
+                            IndexedChoiceInstruction::Trust(index)
+                        ]
+                    } else {
+                        sdeq![
+                            IndexedChoiceInstruction::Try(index),
+                            IndexedChoiceInstruction::Trust(o)
+                        ]
+                    };
+
+                    self.indexing_code
+                        .push(IndexingLine::IndexedChoice(third_level_index));
+                }
+                IndexingCodePtr::Internal(o) => {
+                    self.offset += o;
+                    self.extend_indexed_choice(index);
+                }
+            },
             _ => {
                 unreachable!()
             }
@@ -521,20 +519,18 @@ pub fn remove_constant_indices(
     let iter = once(constant).chain(overlapping_constants.iter());
 
     match &mut indexing_code[index] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, _, ref mut c, ..)) => {
-            match *c {
-                IndexingCodePtr::External(_) => {
-                    *c = IndexingCodePtr::Fail;
-                    return;
-                }
-                IndexingCodePtr::Internal(o) => {
-                    index += o;
-                }
-                IndexingCodePtr::Fail => {
-                    return;
-                }
+        IndexingLine::Indexing(IndexingInstruction::Term(_, _, ref mut c, ..)) => match *c {
+            IndexingCodePtr::External(_) => {
+                *c = IndexingCodePtr::Fail;
+                return;
             }
-        }
+            IndexingCodePtr::Internal(o) => {
+                index += o;
+            }
+            IndexingCodePtr::Fail => {
+                return;
+            }
+        },
         _ => {
             unreachable!()
         }
@@ -546,9 +542,7 @@ pub fn remove_constant_indices(
         // (constant, index_loc) in iter.zip(index_locs.iter()) {
         loop {
             match &mut indexing_code[index] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(
-                    ref mut constants,
-                )) => {
+                IndexingLine::Indexing(IndexingInstruction::Constant(ref mut constants)) => {
                     constants_index = index;
 
                     match constants.get(constant).cloned() {
@@ -573,7 +567,7 @@ pub fn remove_constant_indices(
                         );
 
                         match &mut indexing_code[constants_index] {
-                            IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
+                            IndexingLine::Indexing(IndexingInstruction::Term(
                                 _,
                                 _,
                                 ref mut c,
@@ -581,7 +575,7 @@ pub fn remove_constant_indices(
                             )) => {
                                 *c = ext;
                             }
-                            IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(
+                            IndexingLine::Indexing(IndexingInstruction::Constant(
                                 ref mut constants,
                             )) => {
                                 constants.insert(constant.clone(), ext);
@@ -602,11 +596,11 @@ pub fn remove_constant_indices(
     }
 
     match &indexing_code[constants_index] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(ref constants))
+        IndexingLine::Indexing(IndexingInstruction::Constant(ref constants))
             if constants.is_empty() =>
         {
             match &mut indexing_code[0] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, _, ref mut c, ..)) => {
+                IndexingLine::Indexing(IndexingInstruction::Term(_, _, ref mut c, ..)) => {
                     *c = IndexingCodePtr::Fail;
                 }
                 _ => {
@@ -627,20 +621,18 @@ pub fn remove_structure_index(
     let mut index = 0;
 
     match &mut indexing_code[index] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, _, _, _, ref mut s)) => {
-            match *s {
-                IndexingCodePtr::External(_) => {
-                    *s = IndexingCodePtr::Fail;
-                    return;
-                }
-                IndexingCodePtr::Internal(o) => {
-                    index += o;
-                }
-                IndexingCodePtr::Fail => {
-                    return;
-                }
+        IndexingLine::Indexing(IndexingInstruction::Term(_, _, _, _, ref mut s)) => match *s {
+            IndexingCodePtr::External(_) => {
+                *s = IndexingCodePtr::Fail;
+                return;
             }
-        }
+            IndexingCodePtr::Internal(o) => {
+                index += o;
+            }
+            IndexingCodePtr::Fail => {
+                return;
+            }
+        },
         _ => {
             unreachable!()
         }
@@ -650,7 +642,7 @@ pub fn remove_structure_index(
 
     loop {
         match &mut indexing_code[index] {
-            IndexingLine::Indexing(IndexingInstruction::SwitchOnStructure(ref mut structures)) => {
+            IndexingLine::Indexing(IndexingInstruction::Structure(ref mut structures)) => {
                 structures_index = index;
 
                 match structures.get(&(name.clone(), arity)).cloned() {
@@ -675,7 +667,7 @@ pub fn remove_structure_index(
                     );
 
                     match &mut indexing_code[structures_index] {
-                        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
+                        IndexingLine::Indexing(IndexingInstruction::Term(
                             _,
                             _,
                             _,
@@ -684,7 +676,7 @@ pub fn remove_structure_index(
                         )) => {
                             *s = ext;
                         }
-                        IndexingLine::Indexing(IndexingInstruction::SwitchOnStructure(
+                        IndexingLine::Indexing(IndexingInstruction::Structure(
                             ref mut structures,
                         )) => {
                             structures.insert((name.clone(), arity), ext);
@@ -704,17 +696,11 @@ pub fn remove_structure_index(
     }
 
     match &indexing_code[structures_index] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnStructure(ref structures))
+        IndexingLine::Indexing(IndexingInstruction::Structure(ref structures))
             if structures.is_empty() =>
         {
             match &mut indexing_code[0] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
-                    _,
-                    _,
-                    _,
-                    _,
-                    ref mut s,
-                )) => {
+                IndexingLine::Indexing(IndexingInstruction::Term(_, _, _, _, ref mut s)) => {
                     *s = IndexingCodePtr::Fail;
                 }
                 _ => {
@@ -730,20 +716,18 @@ pub fn remove_list_index(indexing_code: &mut Vec<IndexingLine>, offset: usize) {
     let mut index = 0;
 
     match &mut indexing_code[index] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, _, _, ref mut l, _)) => {
-            match *l {
-                IndexingCodePtr::External(_) => {
-                    *l = IndexingCodePtr::Fail;
-                    return;
-                }
-                IndexingCodePtr::Internal(o) => {
-                    index += o;
-                }
-                IndexingCodePtr::Fail => {
-                    return;
-                }
+        IndexingLine::Indexing(IndexingInstruction::Term(_, _, _, ref mut l, _)) => match *l {
+            IndexingCodePtr::External(_) => {
+                *l = IndexingCodePtr::Fail;
+                return;
             }
-        }
+            IndexingCodePtr::Internal(o) => {
+                index += o;
+            }
+            IndexingCodePtr::Fail => {
+                return;
+            }
+        },
         _ => {
             unreachable!()
         }
@@ -758,13 +742,7 @@ pub fn remove_list_index(indexing_code: &mut Vec<IndexingLine>, offset: usize) {
                     IndexingCodePtr::External(indexed_choice_instrs.pop_back().unwrap().offset());
 
                 match &mut indexing_code[0] {
-                    IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
-                        _,
-                        _,
-                        _,
-                        ref mut l,
-                        _,
-                    )) => {
+                    IndexingLine::Indexing(IndexingInstruction::Term(_, _, _, ref mut l, _)) => {
                         *l = ext;
                     }
                     _ => {
@@ -823,7 +801,7 @@ fn second_level_index<IndexKey: Eq + Hash>(
 ) -> IndexMap<IndexKey, IndexingCodePtr> {
     let mut index_locs = IndexMap::new();
 
-    for (key, mut code) in indices.into_iter() {
+    for (key, mut code) in indices {
         if code.len() > 1 {
             index_locs.insert(key, IndexingCodePtr::Internal(prelude.len() + 1));
             cap_choice_seq_with_trust(&mut code);
@@ -852,8 +830,7 @@ fn switch_on<IndexKey: Eq + Hash>(
         index
             .into_iter()
             .next()
-            .map(|(_, v)| v)
-            .unwrap_or(IndexingCodePtr::Fail)
+            .map_or(IndexingCodePtr::Fail, |(_, v)| v)
     }
 }
 
@@ -866,10 +843,9 @@ fn switch_on_list(
         prelude.push_back(IndexingLine::from(lists));
         IndexingCodePtr::Internal(1)
     } else {
-        lists
-            .first()
-            .map(|i| IndexingCodePtr::External(i.offset()))
-            .unwrap_or(IndexingCodePtr::Fail)
+        lists.first().map_or(IndexingCodePtr::Fail, |i| {
+            IndexingCodePtr::External(i.offset())
+        })
     }
 }
 
@@ -918,7 +894,7 @@ fn compute_index(is_first_index: bool, index: usize) -> IndexedChoiceInstruction
     }
 }
 
-pub fn constant_key_alternatives(constant: &Constant, atom_tbl: TabledData<Atom>) -> Vec<Constant> {
+pub fn constant_key_alternatives(constant: &Constant, atom_tbl: &TabledData<Atom>) -> Vec<Constant> {
     let mut constants = vec![];
 
     match constant {
@@ -993,7 +969,7 @@ impl CodeOffsets {
     }
 
     fn index_constant(&mut self, constant: &Constant, index: usize) -> Vec<Constant> {
-        let overlapping_constants = constant_key_alternatives(constant, self.atom_tbl.clone());
+        let overlapping_constants = constant_key_alternatives(constant, &self.atom_tbl.clone());
 
         let code = self.constants.entry(constant.clone()).or_insert(sdeq![]);
 
@@ -1075,16 +1051,12 @@ impl CodeOffsets {
         let mut lst_loc = switch_on_list(self.lists, &mut prelude);
 
         let mut str_loc = switch_on(
-            IndexingInstruction::SwitchOnStructure,
+            IndexingInstruction::Structure,
             self.structures,
             &mut prelude,
         );
 
-        let con_loc = switch_on(
-            IndexingInstruction::SwitchOnConstant,
-            self.constants,
-            &mut prelude,
-        );
+        let con_loc = switch_on(IndexingInstruction::Constant, self.constants, &mut prelude);
 
         if let IndexingCodePtr::Internal(ref mut i) = &mut str_loc {
             *i += con_loc.is_internal() as usize;
@@ -1097,7 +1069,7 @@ impl CodeOffsets {
 
         let var_offset = 1 + skip_stub_try_me_else as usize;
 
-        prelude.push_front(IndexingLine::from(IndexingInstruction::SwitchOnTerm(
+        prelude.push_front(IndexingLine::from(IndexingInstruction::Term(
             self.optimal_index,
             var_offset,
             con_loc,

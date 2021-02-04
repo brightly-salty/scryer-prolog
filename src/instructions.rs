@@ -1,11 +1,11 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{ClauseName, Constant, RegType, SharedOpDesc, XFY, YFX};
 
-use crate::clause_types::*;
-use crate::forms::*;
+use crate::clause_types::{ArithmeticTerm, ClauseType};
+use crate::forms::Level;
 use crate::indexing::IndexingCodePtr;
-use crate::machine::heap::*;
+use crate::machine::heap::Heap;
 use crate::machine::machine_errors::MachineStub;
-use crate::machine::machine_indices::*;
+use crate::machine::machine_indices::{Addr, HeapCellValue};
 use crate::rug::Integer;
 
 use crate::indexmap::IndexMap;
@@ -116,9 +116,7 @@ pub enum IndexedChoiceInstruction {
 impl IndexedChoiceInstruction {
     pub fn offset(&self) -> usize {
         match *self {
-            Self::Retry(offset) => offset,
-            Self::Trust(offset) => offset,
-            Self::Try(offset) => offset,
+            Self::Retry(offset) | Self::Trust(offset) | Self::Try(offset) => offset,
         }
     }
 
@@ -323,7 +321,7 @@ impl ArithmeticInstruction {
             Self::Or(ref at_1, ref at_2, t) => arith_instr_bin_functor(h, "or", at_1, at_2, t),
             Self::Mod(ref at_1, ref at_2, t) => arith_instr_bin_functor(h, "mod", at_1, at_2, t),
             Self::Rem(ref at_1, ref at_2, t) => arith_instr_bin_functor(h, "rem", at_1, at_2, t),
-            Self::ATan2(ref at_1, ref at_2, t) => arith_instr_bin_functor(h, "rem", at_1, at_2, t),
+            Self::ATan2(ref at_1, ref at_2, t) => arith_instr_bin_functor(h, "atan2", at_1, at_2, t),
             Self::Gcd(ref at_1, ref at_2, t) => arith_instr_bin_functor(h, "gcd", at_1, at_2, t),
             Self::Sign(ref at, t) => arith_instr_unary_functor(h, "sign", at, t),
             Self::Cos(ref at, t) => arith_instr_unary_functor(h, "cos", at, t),
@@ -363,10 +361,10 @@ pub enum ControlInstruction {
 
 impl ControlInstruction {
     pub fn perm_vars(&self) -> Option<usize> {
-        match self {
-            ControlInstruction::CallClause(_, _, num_cells, ..) => Some(*num_cells),
-            ControlInstruction::JmpBy(_, _, num_cells, ..) => Some(*num_cells),
-            _ => None,
+        if let ControlInstruction::CallClause(_, _, num_cells, ..) | ControlInstruction::JmpBy(_, _, num_cells, ..) = self {
+            Some(*num_cells)
+        } else {
+            None
         }
     }
 
@@ -401,21 +399,21 @@ impl ControlInstruction {
 #[derive(Debug)]
 pub enum IndexingInstruction {
     // The first index is the optimal argument being indexed.
-    SwitchOnTerm(
+    Term(
         usize,
         usize,
         IndexingCodePtr,
         IndexingCodePtr,
         IndexingCodePtr,
     ),
-    SwitchOnConstant(IndexMap<Constant, IndexingCodePtr>),
-    SwitchOnStructure(IndexMap<(ClauseName, usize), IndexingCodePtr>),
+    Constant(IndexMap<Constant, IndexingCodePtr>),
+    Structure(IndexMap<(ClauseName, usize), IndexingCodePtr>),
 }
 
 impl IndexingInstruction {
     pub fn to_functor(&self, mut h: usize) -> MachineStub {
         match *self {
-            Self::SwitchOnTerm(arg, vars, constants, lists, structures) => {
+            Self::Term(arg, vars, constants, lists, structures) => {
                 functor!(
                     "switch_on_term",
                     [
@@ -427,7 +425,7 @@ impl IndexingInstruction {
                     ]
                 )
             }
-            Self::SwitchOnConstant(ref constants) => {
+            Self::Constant(ref constants) => {
                 let mut key_value_list_stub = vec![];
                 let orig_h = h;
 
@@ -458,7 +456,7 @@ impl IndexingInstruction {
                     [key_value_list_stub]
                 )
             }
-            Self::SwitchOnStructure(ref structures) => {
+            Self::Structure(ref structures) => {
                 let mut key_value_list_stub = vec![];
                 let orig_h = h;
 

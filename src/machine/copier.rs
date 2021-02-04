@@ -85,14 +85,14 @@ impl<T: CopierTarget> CopyTermState<T> {
             .target
             .store(self.target.deref(Addr::HeapCell(addr + 1)));
 
-        if !cdr.is_ref() {
-            self.trail_list_cell(addr + 1, threshold);
-        } else {
-            let car = self.target.store(self.target.deref(Addr::HeapCell(addr)));
+        if cdr.is_ref() {
+            let car_addr = self.target.store(self.target.deref(Addr::HeapCell(addr)));
 
-            if !car.is_ref() {
+            if !car_addr.is_ref() {
                 self.trail_list_cell(addr, threshold);
             }
+        } else {
+            self.trail_list_cell(addr + 1, threshold);
         }
 
         self.scan += 1;

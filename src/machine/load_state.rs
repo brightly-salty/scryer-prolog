@@ -1,3 +1,6 @@
+use crate::clause_types::ClauseType;
+use crate::forms::{MetaSpec, Module, ModuleDecl, ModuleExport, ModuleSource, OpDecl, PredicateSkeleton};
+use crate::machine::loader::{Loader, RetractionInfo, RetractionRecord};
 use crate::machine::machine_indices::*;
 use crate::machine::term_stream::*;
 use crate::machine::*;
@@ -402,9 +405,8 @@ impl<'a> LoadState<'a> {
                 .entry(key)
                 .or_insert_with(|| CodeIndex::new(IndexPtr::Undefined))
                 .clone();
-        } else {
-            self.get_or_insert_local_code_index(module_name, key)
         }
+        self.get_or_insert_local_code_index(module_name, key)
     }
 
     #[inline]
@@ -838,9 +840,8 @@ impl<'a> LoadState<'a> {
                 Some(code) => {
                     if self.wam.indices.modules.contains_key(&library) {
                         return self.import_qualified_module(library, exports);
-                    } else {
-                        (Stream::from(*code), ListingSource::User)
                     }
+                    (Stream::from(*code), ListingSource::User)
                 }
                 None => {
                     return self.import_qualified_module(library, exports);

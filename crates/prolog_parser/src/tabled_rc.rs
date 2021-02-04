@@ -36,6 +36,7 @@ impl<T: PartialEq> PartialEq for TabledData<T> {
 
 impl<T: Hash + Eq> TabledData<T> {
     #[inline]
+    #[must_use]
     pub fn new(module_name: Rc<String>) -> Self {
         TabledData {
             table: Rc::new(RefCell::new(HashSet::new())),
@@ -44,6 +45,7 @@ impl<T: Hash + Eq> TabledData<T> {
     }
 
     #[inline]
+    #[must_use]
     pub fn borrow_mut(&self) -> RefMut<HashSet<Rc<T>>> {
         self.table.borrow_mut()
     }
@@ -113,6 +115,7 @@ impl<T: Hash + Eq + ToString> TabledRc<T> {
     }
 
     #[inline]
+    #[must_use]
     pub fn inner(&self) -> Rc<T> {
         self.atom.clone()
     }

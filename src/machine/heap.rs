@@ -281,13 +281,12 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
 
             self.push(HeapCellValue::PartialString(pstr, true));
 
-            if !rest_src.is_empty() {
-                self.push(HeapCellValue::Addr(Addr::PStrLocation(h + 2, 0)));
-                src = rest_src;
-            } else {
+            if rest_src.is_empty() {
                 self.push(HeapCellValue::Addr(Addr::HeapCell(h + 1)));
                 return Some(Addr::PStrLocation(orig_h, 0));
             }
+            self.push(HeapCellValue::Addr(Addr::PStrLocation(h + 2, 0)));
+            src = rest_src;
         }
     }
 
@@ -333,7 +332,7 @@ impl<T: RawBlockTraits> HeapTemplate<T> {
         let head_addr = self.h();
         let mut h = head_addr;
 
-        for value in values.map(|v| v.into()) {
+        for value in values.map(std::convert::Into::into) {
             self.push(HeapCellValue::Addr(Addr::Lis(h + 1)));
             self.push(value);
 

@@ -1,18 +1,28 @@
 /// Code generation to WAM-like instructions.
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{
+    ArithmeticError, Atom, Constant, GenContext, RegType, Term, Var, VarReg,
+};
 use crate::prolog_parser_rebis::tabled_rc::TabledData;
 
-use crate::allocator::*;
-use crate::arithmetic::*;
-use crate::clause_types::*;
-use crate::fixtures::*;
-use crate::forms::*;
-use crate::indexing::*;
-use crate::instructions::*;
-use crate::iterators::*;
-use crate::targets::*;
+use crate::allocator::Allocator;
+use crate::arithmetic::{ArithCont, ArithmeticEvaluator};
+use crate::clause_types::{
+    ArithmeticTerm, BuiltInClauseType, ClauseType, InlinedClauseType, SystemClauseType,
+};
+use crate::fixtures::{UnsafeVarMarker, VarData, VariableFixtures};
+use crate::forms::{ClauseIndexInfo, Level, PredicateClause, PredicateSkeleton, QueryTerm, Rule};
+use crate::indexing::CodeOffsets;
+use crate::instructions::{
+    to_indexing_line, ChoiceInstruction, Code, CompiledFact, ControlInstruction, CutInstruction,
+    FactInstruction, Line, QueryInstruction,
+};
+use crate::iterators::{
+    post_order_iter, query_term_post_order_iter, ChunkedIterator, ChunkedTerm, FactIterator,
+    TermRef,
+};
+use crate::targets::CompilationTarget;
 
-use crate::machine::machine_errors::*;
+use crate::machine::machine_errors::CompilationError;
 
 use crate::indexmap::{IndexMap, IndexSet};
 
@@ -66,7 +76,7 @@ impl<'a> ConjunctInfo<'a> {
         self.has_deep_cut as usize
     }
 
-    fn mark_unsafe_vars(&self, mut unsafe_var_marker: UnsafeVarMarker, code: &mut Code) {
+    fn mark_unsafe_vars(mut unsafe_var_marker: UnsafeVarMarker, code: &mut Code) {
         if code.is_empty() {
             return;
         }
@@ -398,10 +408,8 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
 
         match code.last_mut() {
             Some(&mut Line::Control(ref mut ctrl)) => match *ctrl {
-                ControlInstruction::CallClause(_, _, _, ref mut last_call, _) => {
-                    *last_call = true;
-                }
-                ControlInstruction::JmpBy(_, _, _, ref mut last_call) => {
+                ControlInstruction::CallClause(_, _, _, ref mut last_call, _)
+                | ControlInstruction::JmpBy(_, _, _, ref mut last_call) => {
                     *last_call = true;
                 }
                 ControlInstruction::Proceed => {}
@@ -429,8 +437,8 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
             InlinedClauseType::CompareNumber(cmp, ..) => {
                 self.marker.reset_arg(2);
 
-                let (mut lcode, at_1) = self.call_arith_eval(&terms[0], 1)?;
-                let (mut rcode, at_2) = self.call_arith_eval(&terms[1], 2)?;
+                let (mut left_code, at_1) = self.call_arith_eval(&terms[0], 1)?;
+                let (mut right_code, at_2) = self.call_arith_eval(&terms[1], 2)?;
 
                 let at_1 = if let Term::Var(ref vr, ref name) = terms[0] {
                     ArithmeticTerm::Reg(self.mark_non_callable(name.clone(), 1, term_loc, vr, code))
@@ -444,8 +452,8 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
                     at_2.unwrap_or(interm!(2))
                 };
 
-                code.append(&mut lcode);
-                code.append(&mut rcode);
+                code.append(&mut left_code);
+                code.append(&mut right_code);
 
                 code.push(compare_number_instr!(cmp, at_1, at_2));
             }
@@ -595,8 +603,8 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
         term_loc: GenContext,
         use_default_call_policy: bool,
     ) -> Result<(), CompilationError> {
-        let (mut acode, at) = self.call_arith_eval(&terms[1], 1)?;
-        code.append(&mut acode);
+        let (mut arith_code, at) = self.call_arith_eval(&terms[1], 1)?;
+        code.append(&mut arith_code);
 
         self.marker.reset_arg(2);
 
@@ -612,25 +620,9 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
                 }
             }
             Term::Constant(_, ref c @ Constant::Integer(_))
-            | Term::Constant(_, ref c @ Constant::Fixnum(_)) => {
-                code.push(Line::Query(put_constant!(
-                    Level::Shallow,
-                    c.clone(),
-                    temp_v!(1)
-                )));
-
-                self.marker.advance_arg();
-            }
-            Term::Constant(_, ref c @ Constant::Float(_)) => {
-                code.push(Line::Query(put_constant!(
-                    Level::Shallow,
-                    c.clone(),
-                    temp_v!(1)
-                )));
-
-                self.marker.advance_arg();
-            }
-            Term::Constant(_, ref c @ Constant::Rational(_)) => {
+            | Term::Constant(_, ref c @ Constant::Fixnum(_))
+            | Term::Constant(_, ref c @ Constant::Float(_))
+            | Term::Constant(_, ref c @ Constant::Rational(_)) => {
                 code.push(Line::Query(put_constant!(
                     Level::Shallow,
                     c.clone(),
@@ -737,7 +729,7 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
         Ok(())
     }
 
-    fn compile_seq_prelude(&mut self, conjunct_info: &ConjunctInfo, body: &mut Code) {
+    fn compile_seq_prelude(conjunct_info: &ConjunctInfo, body: &mut Code) {
         if conjunct_info.allocates() {
             let perm_vars = conjunct_info.perm_vars();
 
@@ -757,8 +749,9 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
     ) {
         // add a proceed to bookend any trailing cuts.
         match toc {
-            &QueryTerm::BlockedCut | &QueryTerm::UnblockedCut(..) => code.push(proceed!()),
-            &QueryTerm::Clause(_, ClauseType::Inlined(..), ..) => code.push(proceed!()),
+            &QueryTerm::BlockedCut
+            | &QueryTerm::UnblockedCut(..)
+            | &QueryTerm::Clause(_, ClauseType::Inlined(..), ..) => code.push(proceed!()),
             _ => {}
         };
 
@@ -790,7 +783,7 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
         let mut code = Code::new();
 
         self.marker.reset_at_head(args);
-        self.compile_seq_prelude(&conjunct_info, &mut code);
+        Self::compile_seq_prelude(&conjunct_info, &mut code);
 
         let iter = FactIterator::from_rule_head_clause(args);
         let mut fact = self.compile_target(iter, GenContext::Head, false);
@@ -798,7 +791,7 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
         let mut unsafe_var_marker = UnsafeVarMarker::new();
 
         if !fact.is_empty() {
-            unsafe_var_marker = self.mark_unsafe_fact_vars(&mut fact);
+            unsafe_var_marker = Self::mark_unsafe_fact_vars(&mut fact);
 
             for fact_instr in fact {
                 code.push(Line::Fact(fact_instr));
@@ -808,13 +801,13 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
         let iter = ChunkedIterator::from_rule_body(p1, clauses);
         self.compile_seq(iter, &conjunct_info, &mut code, false)?;
 
-        conjunct_info.mark_unsafe_vars(unsafe_var_marker, &mut code);
+        ConjunctInfo::mark_unsafe_vars(unsafe_var_marker, &mut code);
         self.compile_cleanup(&mut code, &conjunct_info, clauses.last().unwrap_or(p1));
 
         Ok(code)
     }
 
-    fn mark_unsafe_fact_vars(&self, fact: &mut CompiledFact) -> UnsafeVarMarker {
+    fn mark_unsafe_fact_vars(fact: &mut CompiledFact) -> UnsafeVarMarker {
         let mut safe_vars = IndexSet::new();
 
         for fact_instr in fact.iter_mut() {
@@ -852,7 +845,7 @@ impl<'a, TermMarker: Allocator<'a>> CodeGenerator<TermMarker> {
             let iter = FactInstruction::iter(term);
             let mut compiled_fact = self.compile_target(iter, GenContext::Head, false);
 
-            self.mark_unsafe_fact_vars(&mut compiled_fact);
+            Self::mark_unsafe_fact_vars(&mut compiled_fact);
 
             if !compiled_fact.is_empty() {
                 for fact_instr in compiled_fact {

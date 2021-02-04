@@ -1,5 +1,5 @@
-use crate::heap_iter::*;
-use crate::machine::*;
+use crate::heap_iter::MutStackHCIterator;
+use crate::machine::{Addr, CodePtr, HeapCellValue, LocalCodePtr, MachineState, RegType};
 
 use crate::indexmap::IndexSet;
 
@@ -115,7 +115,7 @@ impl MachineState {
         let e = self.e;
         self.stack.index_and_frame_mut(e).prelude.interrupt_cp = self.attr_var_init.cp;
 
-        for i in 1..self.num_of_args + 1 {
+        for i in 1..=self.num_of_args {
             self.stack.index_and_frame_mut(e)[i] = self[RegType::Temp(i)];
         }
 

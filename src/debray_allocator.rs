@@ -1,12 +1,12 @@
 use crate::indexmap::IndexMap;
 
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{GenContext, RegType, Term, Var, VarReg};
 
-use crate::allocator::*;
-use crate::fixtures::*;
-use crate::forms::*;
-use crate::machine::machine_indices::*;
-use crate::targets::*;
+use crate::allocator::Allocator;
+use crate::fixtures::VarData;
+use crate::forms::Level;
+use crate::machine::machine_indices::AllocVarDict;
+use crate::targets::CompilationTarget;
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -43,9 +43,9 @@ impl DebrayAllocator {
     fn alloc_with_cr(&self, var: &str) -> usize {
         match self.bindings.get(&var.to_owned()) {
             Some(&VarData::Temp(_, _, ref tvd)) => {
-                for &(_, reg) in tvd.use_set.iter() {
-                    if !self.is_in_use(reg) {
-                        return reg;
+                for (_, reg) in &tvd.use_set {
+                    if !self.is_in_use(*reg) {
+                        return *reg;
                     }
                 }
 
@@ -67,9 +67,9 @@ impl DebrayAllocator {
     fn alloc_with_ca(&self, var: &str) -> usize {
         match self.bindings.get(&var.to_owned()) {
             Some(&VarData::Temp(_, _, ref tvd)) => {
-                for &(_, reg) in tvd.use_set.iter() {
-                    if !self.is_in_use(reg) {
-                        return reg;
+                for (_, reg) in &tvd.use_set {
+                    if !self.is_in_use(*reg) {
+                        return *reg;
                     }
                 }
 
@@ -96,24 +96,20 @@ impl DebrayAllocator {
         // par_k may not be a temporary variable.
         let k = self.arg_c;
 
-        match self.contents.get(&k) {
-            Some(t_var) => {
-                // suppose this branch fires. then t_var is a
-                // temp. var. belonging to the current chunk.
-                // consider its use set. T == par_k iff
-                // (GenContext::Last(_), k) is in t_var.use_set.
+        if let Some(t_var) = self.contents.get(&k) {
+            // suppose this branch fires. then t_var is a
+            // temp. var. belonging to the current chunk.
+            // consider its use set. T == par_k iff
+            // (GenContext::Last(_), k) is in t_var.use_set.
 
-                let tvd = self.bindings.get(t_var).unwrap();
-                if let VarData::Temp(_, _, ref tvd) = *tvd {
-                    if !tvd.use_set.contains(&(GenContext::Last(chunk_num), k)) {
-                        return Some((t_var.clone(), self.alloc_with_ca(t_var)));
-                    }
+            let tvd = self.bindings.get(t_var).unwrap();
+            if let VarData::Temp(_, _, ref tvd) = *tvd {
+                if !tvd.use_set.contains(&(GenContext::Last(chunk_num), k)) {
+                    return Some((t_var.clone(), self.alloc_with_ca(t_var)));
                 }
-
-                None
             }
-            _ => None,
         }
+        None
     }
 
     fn evacuate_arg<'a, Target>(&mut self, chunk_num: usize, target: &mut Vec<Target>)

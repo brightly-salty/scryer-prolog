@@ -344,11 +344,7 @@ impl MachineState {
 
                     for addr in self.acyclic_pre_order_iter(term) {
                         if let Some(var) = addr.as_var() {
-                            if !var_set.contains_key(&var) {
-                                var_set.insert(var, true);
-                            } else {
-                                var_set.insert(var, false);
-                            }
+                            var_set.insert(var, !var_set.contains_key(&var));
                         }
                     }
 
@@ -1300,9 +1296,8 @@ impl CWILCallPolicy {
                     "inference_limit_exceeded",
                     [addr(Addr::Usize(bp))]
                 ));
-            } else {
-                self.count += 1;
             }
+            self.count += 1;
         }
 
         Ok(())
@@ -1390,11 +1385,11 @@ pub(crate) struct SCCCutPolicy {
 }
 
 impl SCCCutPolicy {
-    pub(crate) fn new(r_c_w_h: usize, r_c_wo_h: usize) -> Self {
+    pub(crate) fn new(r_c_with_h: usize, r_c_without_h: usize) -> Self {
         SCCCutPolicy {
             cont_pts: vec![],
-            r_c_w_h,
-            r_c_wo_h,
+            r_c_w_h: r_c_with_h,
+            r_c_wo_h: r_c_without_h,
         }
     }
 

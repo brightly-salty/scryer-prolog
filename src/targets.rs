@@ -1,9 +1,9 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{Constant, RegType, Term};
 
-use crate::clause_types::*;
-use crate::forms::*;
-use crate::instructions::*;
-use crate::iterators::*;
+use crate::clause_types::ClauseType;
+use crate::forms::Level;
+use crate::instructions::{FactInstruction, QueryInstruction};
+use crate::iterators::{breadth_first_iter, post_order_iter, FactIterator, QueryIterator, TermRef};
 
 pub trait CompilationTarget<'a> {
     type Iterator: Iterator<Item = TermRef<'a>>;

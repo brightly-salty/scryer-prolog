@@ -77,14 +77,12 @@ impl Iterator for PStrIter {
             let slice = slice::from_raw_parts(self.buf, self.len);
             let s = str::from_utf8(slice).unwrap();
 
-            if let Some(c) = s.chars().next() {
+            s.chars().next().map(|c| {
                 self.buf = self.buf.add(c.len_utf8());
                 self.len -= c.len_utf8();
 
-                Some(c)
-            } else {
-                None
-            }
+                c
+            })
         }
     }
 }
@@ -116,11 +114,14 @@ impl PartialString {
 
         self.write_terminator_at(terminator_idx);
 
-        if terminator_idx != src.as_bytes().len() {
-            (self, &src[terminator_idx..])
-        } else {
-            (self, "")
-        }
+        (
+            self,
+            if terminator_idx == src.as_bytes().len() {
+                ""
+            } else {
+                &src[terminator_idx..]
+            },
+        )
     }
 
     pub(super) fn clone_from_offset(&self, n: usize) -> Self {
@@ -161,7 +162,7 @@ impl PartialString {
     #[inline]
     pub(super) fn write_terminator_at(&mut self, index: usize) {
         unsafe {
-            ptr::write((self.buf as usize + index) as *mut u8, 0u8);
+            ptr::write((self.buf as usize + index) as *mut u8, 0_u8);
         }
     }
 
@@ -248,11 +249,10 @@ impl<'a> Iterator for HeapPStrIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let addr = self.machine_st.store(self.machine_st.deref(self.focus));
 
-        if !self.seen.contains(&addr) {
-            self.seen.insert(addr);
-        } else {
+        if self.seen.contains(&addr) {
             return None;
         }
+        self.seen.insert(addr);
 
         match addr {
             Addr::PStrLocation(h, n) => {
@@ -289,12 +289,10 @@ impl<'a> Iterator for HeapPStrIter<'a> {
                     _ => None,
                 };
 
-                if let Some(c) = opt_c {
+                opt_c.map(|c| {
                     self.focus = Addr::HeapCell(l + 1);
-                    Some(PStrIteratee::Char(c))
-                } else {
-                    None
-                }
+                    PStrIteratee::Char(c)
+                })
             }
             Addr::EmptyList => {
                 self.focus = Addr::EmptyList;
@@ -327,38 +325,32 @@ pub(super) fn compare_pstr_prefixes<'a>(
                             if let Some(c2) = pstr.as_str_from(n).chars().next() {
                                 if c1 != c2 {
                                     return c1.partial_cmp(&c2);
-                                } else {
-                                    r1 = i1.next();
-                                    r2 = Some(PStrIteratee::PStrSegment(h, n + c2.len_utf8()));
-
-                                    continue;
                                 }
-                            } else {
-                                r2 = i2.next();
+                                r1 = i1.next();
+                                r2 = Some(PStrIteratee::PStrSegment(h, n + c2.len_utf8()));
+
                                 continue;
                             }
-                        } else {
-                            unreachable!()
+                            r2 = i2.next();
+                            continue;
                         }
+                        unreachable!()
                     }
                     (PStrIteratee::PStrSegment(h, n), PStrIteratee::Char(c2)) => {
                         if let HeapCellValue::PartialString(ref pstr, _) = i1.machine_st.heap[h] {
                             if let Some(c1) = pstr.as_str_from(n).chars().next() {
                                 if c1 != c2 {
                                     return c2.partial_cmp(&c1);
-                                } else {
-                                    r1 = i1.next();
-                                    r2 = Some(PStrIteratee::PStrSegment(h, n + c1.len_utf8()));
-
-                                    continue;
                                 }
-                            } else {
                                 r1 = i1.next();
+                                r2 = Some(PStrIteratee::PStrSegment(h, n + c1.len_utf8()));
+
                                 continue;
                             }
-                        } else {
-                            unreachable!()
+                            r1 = i1.next();
+                            continue;
                         }
+                        unreachable!()
                     }
                     (PStrIteratee::PStrSegment(h1, n1), PStrIteratee::PStrSegment(h2, n2)) => {
                         if let (
@@ -379,12 +371,10 @@ pub(super) fn compare_pstr_prefixes<'a>(
                                 r2 = Some(PStrIteratee::PStrSegment(h2, n2 + str1.len()));
 
                                 continue;
-                            } else {
-                                return str1.partial_cmp(str2);
                             }
-                        } else {
-                            unreachable!()
+                            return str1.partial_cmp(str2);
                         }
+                        unreachable!()
                     }
                 }
 
@@ -414,9 +404,8 @@ pub(super) fn compare_pstr_to_string(heap_pstr_iter: &mut HeapPStrIter, s: &str)
                 if let Some(c2) = s[s_offset..].chars().next() {
                     if c1 != c2 {
                         return None;
-                    } else {
-                        s_offset += c1.len_utf8();
                     }
+                    s_offset += c1.len_utf8();
                 } else {
                     return Some(s_offset);
                 }

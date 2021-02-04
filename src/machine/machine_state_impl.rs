@@ -182,9 +182,8 @@ impl MachineState {
 
                 if tabu_list.contains(&(d1, d2)) {
                     continue;
-                } else {
-                    tabu_list.insert((d1, d2));
                 }
+                tabu_list.insert((d1, d2));
 
                 match (d1, d2) {
                     (Addr::AttrVar(h), addr) | (addr, Addr::AttrVar(h)) => {
@@ -387,9 +386,8 @@ impl MachineState {
 
                 if tabu_list.contains(&(d1, d2)) {
                     continue;
-                } else {
-                    tabu_list.insert((d1, d2));
                 }
+                tabu_list.insert((d1, d2));
 
                 match (d1, d2) {
                     (Addr::AttrVar(h), addr) | (addr, Addr::AttrVar(h)) => {
@@ -889,7 +887,7 @@ impl MachineState {
                 let n1 = try_or_fail!(self, self.get_number(a1));
                 let n2 = try_or_fail!(self, self.get_number(a2));
 
-                self.interms[t - 1] = try_or_fail!(self, self.pow(n1, n2, "(**)"));
+                self.interms[t - 1] = try_or_fail!(self, self.pow(&n1, &n2, "(**)"));
                 self.p += 1;
             }
             ArithmeticInstruction::RDiv(ref a1, ref a2, t) => {
@@ -899,7 +897,7 @@ impl MachineState {
                 let (r2, _) = try_or_fail!(self, self.get_rational(a2, stub));
 
                 self.interms[t - 1] =
-                    Number::Rational(Rc::new(try_or_fail!(self, self.rdiv(r1, r2))));
+                    Number::Rational(Rc::new(try_or_fail!(self, self.rdiv(&r1, &r2))));
                 self.p += 1;
             }
             ArithmeticInstruction::IntFloorDiv(ref a1, ref a2, t) => {
@@ -925,7 +923,7 @@ impl MachineState {
             ArithmeticInstruction::Sign(ref a1, t) => {
                 let n = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = self.sign(n);
+                self.interms[t - 1] = Self::sign(&n);
                 self.p += 1;
             }
             ArithmeticInstruction::Neg(ref a1, t) => {
@@ -999,59 +997,64 @@ impl MachineState {
             ArithmeticInstruction::Cos(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = Number::Float(OrderedFloat(try_or_fail!(self, self.cos(n1))));
+                self.interms[t - 1] =
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.cos(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::Sin(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = Number::Float(OrderedFloat(try_or_fail!(self, self.sin(n1))));
+                self.interms[t - 1] =
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.sin(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::Tan(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = Number::Float(OrderedFloat(try_or_fail!(self, self.tan(n1))));
+                self.interms[t - 1] =
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.tan(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::Sqrt(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
                 self.interms[t - 1] =
-                    Number::Float(OrderedFloat(try_or_fail!(self, self.sqrt(n1))));
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.sqrt(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::Log(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = Number::Float(OrderedFloat(try_or_fail!(self, self.log(n1))));
+                self.interms[t - 1] =
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.log(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::Exp(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = Number::Float(OrderedFloat(try_or_fail!(self, self.exp(n1))));
+                self.interms[t - 1] =
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.exp(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::ACos(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
                 self.interms[t - 1] =
-                    Number::Float(OrderedFloat(try_or_fail!(self, self.acos(n1))));
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.acos(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::ASin(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
                 self.interms[t - 1] =
-                    Number::Float(OrderedFloat(try_or_fail!(self, self.asin(n1))));
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.asin(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::ATan(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
                 self.interms[t - 1] =
-                    Number::Float(OrderedFloat(try_or_fail!(self, self.atan(n1))));
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.atan(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::ATan2(ref a1, ref a2, t) => {
@@ -1059,20 +1062,20 @@ impl MachineState {
                 let n2 = try_or_fail!(self, self.get_number(a2));
 
                 self.interms[t - 1] =
-                    Number::Float(OrderedFloat(try_or_fail!(self, self.atan2(n1, n2))));
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.atan2(&n1, &n2))));
                 self.p += 1;
             }
             ArithmeticInstruction::Float(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
                 self.interms[t - 1] =
-                    Number::Float(OrderedFloat(try_or_fail!(self, self.float(n1))));
+                    Number::Float(OrderedFloat(try_or_fail!(self, self.float(&n1))));
                 self.p += 1;
             }
             ArithmeticInstruction::Truncate(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = self.truncate(n1);
+                self.interms[t - 1] = Self::truncate(n1);
                 self.p += 1;
             }
             ArithmeticInstruction::Round(ref a1, t) => {
@@ -1084,13 +1087,13 @@ impl MachineState {
             ArithmeticInstruction::Ceiling(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = self.ceiling(n1);
+                self.interms[t - 1] = Self::ceiling(n1);
                 self.p += 1;
             }
             ArithmeticInstruction::Floor(ref a1, t) => {
                 let n1 = try_or_fail!(self, self.get_number(a1));
 
-                self.interms[t - 1] = self.floor(n1);
+                self.interms[t - 1] = Self::floor(&n1);
                 self.p += 1;
             }
             ArithmeticInstruction::Plus(ref a1, t) => {
@@ -1274,17 +1277,16 @@ impl MachineState {
         call_policy: &mut Box<dyn CallPolicy>,
     ) {
         let mut index = 0;
-        let addr = if let IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(arg, ..)) =
-            indexing_lines[0]
-        {
-            self.store(self.deref(self[temp_v!(arg)]))
-        } else {
-            unreachable!()
-        };
+        let addr =
+            if let IndexingLine::Indexing(IndexingInstruction::Term(arg, ..)) = indexing_lines[0] {
+                self.store(self.deref(self[temp_v!(arg)]))
+            } else {
+                unreachable!()
+            };
 
         loop {
             match indexing_lines[index] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
+                IndexingLine::Indexing(IndexingInstruction::Term(
                     _,
                     var,
                     constant,
@@ -1323,7 +1325,7 @@ impl MachineState {
                         }
                     };
                 }
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnConstant(ref hm)) => {
+                IndexingLine::Indexing(IndexingInstruction::Constant(ref hm)) => {
                     let offset = match addr.as_constant_index(&self) {
                         Some(c) => match hm.get(&c) {
                             Some(offset) => *offset,
@@ -1346,7 +1348,7 @@ impl MachineState {
                         }
                     };
                 }
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnStructure(ref hm)) => {
+                IndexingLine::Indexing(IndexingInstruction::Structure(ref hm)) => {
                     let offset = if let Addr::Str(s) = addr {
                         if let HeapCellValue::NamedStr(arity, ref name, _) = self.heap[s] {
                             if let Some(offset) = hm.get(&(name.clone(), arity)) {
@@ -1402,12 +1404,12 @@ impl MachineState {
             }
             QueryInstruction::PutPartialString(_, ref string, reg, has_tail) => {
                 let pstr_addr = if has_tail {
-                    if !string.is_empty() {
+                    if string.is_empty() {
+                        Addr::EmptyList
+                    } else {
                         let pstr_addr = self.heap.allocate_pstr(&string);
                         self.heap.pop(); // the tail will be added by the next instruction.
                         pstr_addr
-                    } else {
-                        Addr::EmptyList
                     }
                 } else {
                     self.heap.put_complete_string(&string)
@@ -1527,7 +1529,7 @@ impl MachineState {
     pub(super) fn setup_call_n(&mut self, arity: usize) -> Option<PredicateKey> {
         let addr = self.store(self.deref(self.registers[arity]));
 
-        let (name, narity) = match addr {
+        let (name, n_arity) = match addr {
             Addr::Str(a) => {
                 let result = self.heap.clone(a);
 
@@ -1558,13 +1560,14 @@ impl MachineState {
                     return None;
                 }
             }
-            Addr::Con(h) => match &self.heap[h] {
-                HeapCellValue::Atom(ref name, _) => (name.clone(), 0),
-                _ => {
+            Addr::Con(h) => {
+                if let HeapCellValue::Atom(ref name, _) = &self.heap[h] {
+                    (name.clone(), 0)
+                } else {
                     self.fail = true;
                     return None;
                 }
-            },
+            }
             Addr::HeapCell(_) | Addr::StackCell(_, _) => {
                 let stub = MachineError::functor_stub(clause_name!("call"), arity + 1);
                 let instantiation_error =
@@ -1585,7 +1588,7 @@ impl MachineState {
             }
         };
 
-        Some((name, arity + narity - 1))
+        Some((name, arity + n_arity - 1))
     }
 
     pub(super) fn unwind_stack(&mut self) {
@@ -1604,12 +1607,11 @@ impl MachineState {
         loop {
             if let Some(addr) = iter.stack().last() {
                 if is_composite(addr) {
-                    if !seen.contains(addr) {
-                        seen.insert(*addr);
-                    } else {
+                    if seen.contains(addr) {
                         fail = true;
                         break;
                     }
+                    seen.insert(*addr);
                 }
             }
 
@@ -1651,12 +1653,11 @@ impl MachineState {
                     return Err(self.error_form(dom_err, stub));
                 }
 
-                let n = match n.to_usize() {
-                    Some(n) => n,
-                    None => {
-                        self.fail = true;
-                        return Ok(());
-                    }
+                let n = if let Some(n) = n.to_usize() {
+                    n
+                } else {
+                    self.fail = true;
+                    return Ok(());
                 };
 
                 let term = self.store(self.deref(self[temp_v!(2)]));
@@ -1797,16 +1798,16 @@ impl MachineState {
                         }
                     }
 
-                    let (lstack, rstack) = iter.stack();
+                    let (left, right) = iter.stack();
 
-                    lstack.pop();
-                    lstack.pop();
+                    left.pop();
+                    left.pop();
 
-                    rstack.pop();
-                    rstack.pop();
+                    right.pop();
+                    right.pop();
 
-                    lstack.push(i1.focus());
-                    rstack.push(i2.focus());
+                    left.push(i1.focus());
+                    right.push(i2.focus());
                 }
                 (Addr::Lis(_), Addr::Lis(_)) => {
                     continue;
@@ -1854,9 +1855,8 @@ impl MachineState {
                         if let Ok(n2) = Number::try_from((a2, &self.heap)) {
                             if n1 != n2 {
                                 return true;
-                            } else {
-                                continue;
                             }
+                            continue;
                         }
                     }
 
@@ -1895,9 +1895,8 @@ impl MachineState {
                     if let Addr::Float(f1) = v1 {
                         if let Addr::Float(f2) = v2 {
                             return Some(f1.cmp(&f2));
-                        } else {
-                            unreachable!()
                         }
+                        unreachable!()
                     } else {
                         unreachable!()
                     }
@@ -2051,16 +2050,16 @@ impl MachineState {
                                 return Some(ordering);
                             }
                         } else {
-                            let (lstack, rstack) = iter.stack();
+                            let (left, right) = iter.stack();
 
-                            lstack.pop();
-                            lstack.pop();
+                            left.pop();
+                            left.pop();
 
-                            rstack.pop();
-                            rstack.pop();
+                            right.pop();
+                            right.pop();
 
-                            lstack.push(i1.focus());
-                            rstack.push(i2.focus());
+                            left.push(i1.focus());
+                            right.push(i2.focus());
                         }
                     }
                     (Addr::Str(h1), Addr::Str(h2)) => {
@@ -2301,10 +2300,10 @@ impl MachineState {
         r: Ref,
     ) {
         let spec = spec.and_then(|spec| {
-            if spec.arity() != arity {
-                fetch_op_spec(name.clone(), arity, op_dir)
-            } else {
+            if spec.arity() == arity {
                 Some(spec)
+            } else {
+                fetch_op_spec(name.clone(), arity, op_dir)
             }
         });
 
@@ -2763,12 +2762,10 @@ impl MachineState {
                         if let Ok(n2) = Number::try_from(v2) {
                             if n1 != n2 {
                                 return true;
-                            } else {
-                                continue;
                             }
-                        } else {
-                            return true;
+                            continue;
                         }
+                        return true;
                     }
 
                     match (v1, v2) {

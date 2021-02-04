@@ -91,9 +91,8 @@ impl<T: RawBlockTraits> RawBlock<T> {
         loop {
             if self.free_space() >= size {
                 return (self.top as usize + size) as *const _;
-            } else {
-                self.grow();
             }
+            self.grow();
         }
     }
 

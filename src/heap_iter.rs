@@ -1,5 +1,5 @@
-use crate::machine::machine_indices::*;
-use crate::machine::machine_state::*;
+use crate::machine::machine_indices::{Addr, HeapCellValue};
+use crate::machine::machine_state::MachineState;
 
 use crate::indexmap::IndexSet;
 
@@ -29,7 +29,7 @@ impl<'a> HCPreOrderIterator<'a> {
     fn follow_heap(&mut self, h: usize) -> Addr {
         match &self.machine_st.heap[h] {
             &HeapCellValue::NamedStr(arity, _, _) => {
-                for idx in (1..arity + 1).rev() {
+                for idx in (1..=arity).rev() {
                     self.state_stack.push(Addr::HeapCell(h + idx));
                 }
 

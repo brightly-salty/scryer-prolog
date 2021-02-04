@@ -1,10 +1,19 @@
 use crate::lexical::parse_lossy;
-use crate::macros::{alpha_numeric_char, back_quote_char, backslash_char, binary_digit_char, capital_letter_char, comment_1_char, comment_2_char, cut_char, decimal_digit_char, decimal_point_char, double_quote_char, end_line_comment_char, exponent_char, graphic_char, graphic_token_char, hexadecimal_digit_char, layout_char, meta_char, new_line_char, octal_digit_char, prolog_char, semicolon_char, sign_char, single_quote_char, small_letter_char, solo_char, space_char, symbolic_hexadecimal_char, variable_indicator_char};
-use crate::ordered_float::*;
+use crate::macros::{
+    alpha_numeric_char, back_quote_char, backslash_char, binary_digit_char, capital_letter_char,
+    comment_1_char, comment_2_char, cut_char, decimal_digit_char, decimal_point_char,
+    double_quote_char, end_line_comment_char, exponent_char, graphic_char, graphic_token_char,
+    hexadecimal_digit_char, layout_char, meta_char, new_line_char, octal_digit_char, prolog_char,
+    semicolon_char, sign_char, single_quote_char, small_letter_char, solo_char, space_char,
+    symbolic_hexadecimal_char, variable_indicator_char,
+};
+use crate::ordered_float::OrderedFloat;
 use crate::rug::Integer;
 
-use ast::*;
-use tabled_rc::*;
+use ast::{
+    rc_atom, Atom, ClauseName, Constant, DoubleQuotes, MachineFlags, ParserError, ParsingStream,
+};
+use tabled_rc::{TabledData, TabledRc};
 
 use std::convert::TryFrom;
 use std::fmt;
@@ -108,6 +117,9 @@ impl<'a, R: Read> Lexer<'a, R> {
         }
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if an EOF was gotten but not expected
     pub fn eof(&mut self) -> Result<bool, ParserError> {
         if self.reader.peek().is_none() {
             return Ok(true);
@@ -128,6 +140,9 @@ impl<'a, R: Read> Lexer<'a, R> {
         Ok(false)
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there was an unexpected EOF
     pub fn lookahead_char(&mut self) -> Result<char, ParserError> {
         match self.reader.peek() {
             Some(&Ok(c)) => Ok(c),
@@ -155,22 +170,22 @@ impl<'a, R: Read> Lexer<'a, R> {
             // Keep reading until we find characters '*' and '/'
             // Deliberately skip checks for prolog_char to allow comments to contain any characters,
             // including so-called "extended characters", without having to explicitly add them to a character class.
-            let mut c = self.lookahead_char()?;
+            let mut c2 = self.lookahead_char()?;
             loop {
-                while !comment_2_char(c) {
+                while !comment_2_char(c2) {
                     self.skip_char()?;
-                    c = self.lookahead_char()?;
+                    c2 = self.lookahead_char()?;
                 }
 
                 self.skip_char()?;
 
-                c = self.lookahead_char()?;
-                if comment_1_char(c) {
+                c2 = self.lookahead_char()?;
+                if comment_1_char(c2) {
                     break;
                 }
             }
 
-            if prolog_char(c) {
+            if prolog_char(c2) {
                 self.skip_char()?;
                 Ok(true)
             } else {
@@ -186,11 +201,11 @@ impl<'a, R: Read> Lexer<'a, R> {
         if back_quote_char(self.lookahead_char()?) {
             let c = self.skip_char()?;
 
-            if !back_quote_char(self.lookahead_char()?) {
+            if back_quote_char(self.lookahead_char()?) {
+                self.skip_char()
+            } else {
                 self.return_char(c);
                 Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
-            } else {
-                self.skip_char()
             }
         } else if single_quote_char(self.lookahead_char()?) {
             self.skip_char()
@@ -242,9 +257,8 @@ impl<'a, R: Read> Lexer<'a, R> {
             if new_line_char(self.lookahead_char()?) {
                 self.skip_char()?;
                 return Ok(None);
-            } else {
-                self.return_char(c);
             }
+            self.return_char(c);
         }
 
         self.get_single_quoted_char().map(Some)
@@ -256,11 +270,11 @@ impl<'a, R: Read> Lexer<'a, R> {
         if single_quote_char(c) {
             self.skip_char()?;
 
-            if !single_quote_char(self.lookahead_char()?) {
+            if single_quote_char(self.lookahead_char()?) {
+                self.skip_char()
+            } else {
                 self.return_char(c);
                 Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
-            } else {
-                self.skip_char()
             }
         } else if double_quote_char(c) || back_quote_char(c) {
             self.skip_char()
@@ -276,9 +290,8 @@ impl<'a, R: Read> Lexer<'a, R> {
             if new_line_char(self.lookahead_char()?) {
                 self.skip_char()?;
                 return Ok(None);
-            } else {
-                self.return_char(c);
             }
+            self.return_char(c);
         }
 
         self.get_double_quoted_char().map(Some)
@@ -288,11 +301,11 @@ impl<'a, R: Read> Lexer<'a, R> {
         if double_quote_char(self.lookahead_char()?) {
             let c = self.skip_char()?;
 
-            if !double_quote_char(self.lookahead_char()?) {
+            if double_quote_char(self.lookahead_char()?) {
+                self.skip_char()
+            } else {
                 self.return_char(c);
                 Err(ParserError::UnexpectedChar(c, self.line_num, self.col_num))
-            } else {
-                self.skip_char()
             }
         } else if single_quote_char(self.lookahead_char()?)
             || back_quote_char(self.lookahead_char()?)
@@ -383,13 +396,13 @@ impl<'a, R: Read> Lexer<'a, R> {
 
             self.skip_char()?;
 
-            let c = self.lookahead_char()?;
+            let c2 = self.lookahead_char()?;
 
-            if meta_char(c) {
+            if meta_char(c2) {
                 self.skip_char()
-            } else if octal_digit_char(c) {
+            } else if octal_digit_char(c2) {
                 self.get_octal_escape_sequence()
-            } else if symbolic_hexadecimal_char(c) {
+            } else if symbolic_hexadecimal_char(c2) {
                 self.get_hexadecimal_escape_sequence()
             } else {
                 self.get_control_escape_sequence()
@@ -547,6 +560,9 @@ impl<'a, R: Read> Lexer<'a, R> {
         Token::Constant(Constant::Float(result))
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there were any errors while trying to parse a number token
     pub fn number_token(&mut self) -> Result<Token, ParserError> {
         let mut token = String::new();
 
@@ -577,12 +593,12 @@ impl<'a, R: Read> Lexer<'a, R> {
                 token.push('.');
                 token.push(self.skip_char()?);
 
-                let mut c = self.lookahead_char()?;
+                let mut c2 = self.lookahead_char()?;
 
-                while decimal_digit_char(c) {
-                    token.push(c);
+                while decimal_digit_char(c2) {
+                    token.push(c2);
                     self.skip_char()?;
-                    c = self.lookahead_char()?;
+                    c2 = self.lookahead_char()?;
                 }
 
                 if exponent_char(self.lookahead_char()?) {
@@ -705,9 +721,8 @@ impl<'a, R: Read> Lexer<'a, R> {
                         self.return_char('\'');
 
                         return Ok(Token::Constant(Constant::Fixnum(0)));
-                    } else {
-                        self.return_char('\\');
                     }
+                    self.return_char('\\');
                 }
 
                 self.get_single_quoted_char()
@@ -748,14 +763,14 @@ impl<'a, R: Read> Lexer<'a, R> {
         }
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there were any errors while scanning for layout characters
     pub fn scan_for_layout(&mut self) -> Result<bool, ParserError> {
         let mut layout_inserted = false;
-        let mut more_layout = true;
 
         loop {
-            let cr = self.lookahead_char();
-
-            match cr {
+            match self.lookahead_char() {
                 Ok(c) if layout_char(c) || new_line_char(c) => {
                     self.skip_char()?;
                     layout_inserted = true;
@@ -768,20 +783,19 @@ impl<'a, R: Read> Lexer<'a, R> {
                     if self.bracketed_comment()? {
                         layout_inserted = true;
                     } else {
-                        more_layout = false;
+                        break;
                     }
                 }
-                _ => more_layout = false,
+                _ => break,
             };
-
-            if !more_layout {
-                break;
-            }
         }
 
         Ok(layout_inserted)
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there were any errors while getting the next token
     pub fn next_token(&mut self) -> Result<Token, ParserError> {
         let layout_inserted = self.scan_for_layout()?;
         let cr = self.lookahead_char();
@@ -866,10 +880,9 @@ impl<'a, R: Read> Lexer<'a, R> {
                     if let DoubleQuotes::Atom = self.flags.double_quotes {
                         let s = clause_name!(s, self.atom_tbl);
                         return Ok(Token::Constant(Constant::Atom(s, None)));
-                    } else {
-                        let s = Rc::new(s);
-                        return Ok(Token::Constant(Constant::String(s)));
                     }
+                    let s = Rc::new(s);
+                    return Ok(Token::Constant(Constant::String(s)));
                 }
 
                 self.name_token(c)

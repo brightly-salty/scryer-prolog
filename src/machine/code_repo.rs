@@ -1,6 +1,6 @@
-use crate::clause_types::*;
-use crate::instructions::*;
-use crate::machine::machine_indices::*;
+use crate::clause_types::ClauseType;
+use crate::instructions::{Code, ControlInstruction, IndexingLine, Line};
+use crate::machine::machine_indices::{CodePtr, LocalCodePtr, RefOrOwned};
 
 #[derive(Debug)]
 pub struct CodeRepo {

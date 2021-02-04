@@ -1,4 +1,5 @@
-#![deny(clippy::all)]
+#![deny(clippy::all, clippy::pedantic)]
+#![allow(clippy::too_many_lines)]
 
 extern crate lexical;
 #[cfg(feature = "num-rug-adapter")]

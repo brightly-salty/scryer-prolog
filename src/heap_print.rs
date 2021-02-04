@@ -1,18 +1,20 @@
+use crate::prolog_parser_rebis::ast::{
+    is_fx, is_infix, is_postfix, is_prefix, is_xf, is_xfx, is_xfy, is_yfx, ClauseName, Fixity,
+    OpDir, OpDirValue, SharedOpDesc, Var, FY,
+};
 use prolog_parser_rebis::macros::{
     alpha_numeric_char, capital_letter_char, cut_char, decimal_digit_char, graphic_token_char,
     semicolon_char, sign_char, single_quote_char, small_letter_char, solo_char,
     variable_indicator_char,
 };
 
-use crate::prolog_parser_rebis::ast::*;
-
-use crate::clause_types::*;
-use crate::forms::*;
-use crate::heap_iter::*;
-use crate::machine::heap::*;
-use crate::machine::machine_indices::*;
-use crate::machine::machine_state::*;
-use crate::machine::streams::*;
+use crate::clause_types::ClauseType;
+use crate::forms::{fetch_atom_op_spec, fetch_op_spec_from_existing, Number};
+use crate::heap_iter::{HCPreOrderIterator, MutStackHCIterator};
+use crate::machine::heap::Heap;
+use crate::machine::machine_indices::{Addr, HeapCellValue, Ref};
+use crate::machine::machine_state::MachineState;
+use crate::machine::streams::Stream;
 use crate::ordered_float::OrderedFloat;
 use crate::rug::{Integer, Rational};
 
@@ -111,10 +113,9 @@ impl<'a> HCPreOrderIterator<'a> {
                     {
                         if needs_bracketing(spec, &parent_spec) {
                             return false;
-                        } else {
-                            addr = Addr::HeapCell(s + 1);
-                            parent_spec = DirectedOp::Right(name.clone(), spec.clone());
                         }
+                        addr = Addr::HeapCell(s + 1);
+                        parent_spec = DirectedOp::Right(name.clone(), spec.clone());
                     }
                     _ => {
                         return false;
@@ -153,13 +154,20 @@ fn char_to_string(is_quoted: bool, c: char) -> String {
         '\u{07}' if is_quoted => "\\a".to_string(), // UTF-8 alert
         '"' if is_quoted => "\\\"".to_string(),
         '\\' if is_quoted => "\\\\".to_string(),
-        '\'' | '\n' | '\r' | '\t' | '\u{0b}' | '\u{0c}' | '\u{08}' | '\u{07}' | '"' | '\\' => {
-            c.to_string()
-        }
-        '\u{a0}'..='\u{d6}' => c.to_string(),
-        '\u{d8}'..='\u{f6}' => c.to_string(),
-        '\u{f8}'..='\u{74f}' => c.to_string(),
-        '\x20'..='\x7e' => c.to_string(),
+        '\''
+        | '\n'
+        | '\r'
+        | '\t'
+        | '\u{0b}'
+        | '\u{0c}'
+        | '\u{08}'
+        | '\u{07}'
+        | '"'
+        | '\\'
+        | '\u{a0}'..='\u{d6}'
+        | '\u{d8}'..='\u{f6}'
+        | '\u{f8}'..='\u{74f}'
+        | '\x20'..='\x7e' => c.to_string(),
         _ => format!("\\x{:x}\\", c as u32),
     }
 }
@@ -270,18 +278,16 @@ fn is_numbered_var(ct: &ClauseType, arity: usize) -> bool {
 
 #[inline]
 fn negated_op_needs_bracketing(iter: &HCPreOrderIterator, op: &Option<DirectedOp>) -> bool {
-    if let Some(ref op) = op {
+    op.clone().map_or(false, |ref op| {
         op.is_negative_sign()
             && iter.leftmost_leaf_has_property(|addr, heap| match Number::try_from((addr, heap)) {
                 Ok(Number::Fixnum(n)) => n > 0,
-                Ok(Number::Float(f)) => f > OrderedFloat(0f64),
+                Ok(Number::Float(f)) => f > OrderedFloat(0_f64),
                 Ok(Number::Integer(n)) => *n > 0,
                 Ok(Number::Rational(n)) => *n > 0,
                 _ => false,
             })
-    } else {
-        false
-    }
+    })
 }
 
 fn numbervar(n: Integer) -> Var {
@@ -327,6 +333,7 @@ impl MachineState {
 type ReverseHeapVarDict = IndexMap<Addr, Rc<Var>>;
 
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct HCPrinter<'a, Outputter> {
     outputter: Outputter,
     machine_st: &'a MachineState,
@@ -359,30 +366,25 @@ macro_rules! push_space_if_amb {
 }
 
 pub fn requires_space(atom: &str, op: &str) -> bool {
-    match atom.chars().last() {
-        Some(ac) => op
-            .chars()
-            .next()
-            .map(|oc| {
-                if ac == '0' {
-                    oc == '\'' || oc == '(' || alpha_numeric_char(oc)
-                } else if alpha_numeric_char(ac) {
-                    oc == '(' || alpha_numeric_char(oc)
-                } else if graphic_token_char(ac) {
-                    graphic_token_char(oc)
-                } else if variable_indicator_char(ac) || capital_letter_char(ac) {
-                    alpha_numeric_char(oc)
-                } else if sign_char(ac) {
-                    sign_char(oc) || decimal_digit_char(oc)
-                } else if single_quote_char(ac) {
-                    single_quote_char(oc)
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(false),
-        _ => false,
-    }
+    atom.chars().last().map_or(false, |ac| {
+        op.chars().next().map_or(false, |oc| {
+            if ac == '0' {
+                oc == '\'' || oc == '(' || alpha_numeric_char(oc)
+            } else if alpha_numeric_char(ac) {
+                oc == '(' || alpha_numeric_char(oc)
+            } else if graphic_token_char(ac) {
+                graphic_token_char(oc)
+            } else if variable_indicator_char(ac) || capital_letter_char(ac) {
+                alpha_numeric_char(oc)
+            } else if sign_char(ac) {
+                sign_char(oc) || decimal_digit_char(oc)
+            } else if single_quote_char(ac) {
+                single_quote_char(oc)
+            } else {
+                false
+            }
+        })
+    })
 }
 
 /*
@@ -430,7 +432,7 @@ fn non_quoted_graphic_token<Iter: Iterator<Item = char>>(mut iter: Iter, c: char
 }
 
 pub(super) fn non_quoted_token<Iter: Iterator<Item = char>>(mut iter: Iter) -> bool {
-    if let Some(c) = iter.next() {
+    iter.next().map_or(false, |c| {
         if small_letter_char(c) {
             iter.all(alpha_numeric_char)
         } else if graphic_token_char(c) {
@@ -446,9 +448,7 @@ pub(super) fn non_quoted_token<Iter: Iterator<Item = char>>(mut iter: Iter) -> b
         } else {
             false
         }
-    } else {
-        false
-    }
+    })
 }
 
 #[inline]
@@ -525,7 +525,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         &mut self,
         iter: &mut HCPreOrderIterator,
         mut max_depth: usize,
-        ct: ClauseType,
+        ct: &ClauseType,
         spec: SharedOpDesc,
     ) {
         if is_postfix(spec.assoc()) {
@@ -547,12 +547,9 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                 right_directed_op,
             ));
         } else if is_prefix(spec.assoc()) {
-            match ct.name().as_str() {
-                "-" | "\\" => {
-                    self.format_prefix_op_with_space(iter, max_depth, ct.name(), spec);
-                    return;
-                }
-                _ => {}
+            if let "-" | "\\" = ct.name().as_str() {
+                self.format_prefix_op_with_space(iter, max_depth, ct.name(), spec);
+                return;
             };
 
             if self.check_max_depth(&mut max_depth) {
@@ -741,7 +738,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         iter: &mut HCPreOrderIterator,
         max_depth: usize,
         arity: usize,
-        ct: ClauseType,
+        ct: &ClauseType,
     ) -> bool {
         if self.numbervars && is_numbered_var(&ct, arity) && self.format_numbered_vars(iter) {
             return true;
@@ -754,7 +751,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
             }
 
             if !self.ignore_ops && spec.prec() > 0 {
-                self.enqueue_op(iter, max_depth, ct, spec);
+                self.enqueue_op(iter, max_depth, &ct, spec);
                 return true;
             }
         }
@@ -781,10 +778,9 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         if let Some(var) = self.var_names.get(&addr) {
             if addr.as_var().is_some() {
                 return Some(var.to_string());
-            } else {
-                iter.stack().push(addr);
-                return None;
             }
+            iter.stack().push(addr);
+            return None;
         }
 
         if let Addr::Lis(h) | Addr::Str(h) = addr {
@@ -824,7 +820,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                     unreachable!()
                 };
 
-                for i in 1..arity + 1 {
+                for i in 1..=arity {
                     let c = self
                         .machine_st
                         .store(self.machine_st.deref(Addr::HeapCell(s + i)));
@@ -854,54 +850,49 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                 self.heap_locs.insert(addr, Rc::new(var.clone()));
             }
 
-            match self.heap_locs.get(&addr).cloned() {
-                Some(var) => {
-                    if !self.printed_vars.contains(&addr) {
-                        self.printed_vars.insert(addr);
-                        iter.next()
-                    } else {
-                        iter.stack().pop();
+            if let Some(var) = self.heap_locs.get(&addr).cloned() {
+                if self.printed_vars.contains(&addr) {
+                    iter.stack().pop();
 
-                        push_space_if_amb!(self, &var, {
-                            self.append_str(&var);
-                        });
+                    push_space_if_amb!(self, &var, {
+                        self.append_str(&var);
+                    });
 
-                        None
-                    }
-                }
-                None => {
-                    let offset = if let Some(offset) = functor_location(&addr) {
-                        offset
-                    } else {
-                        return iter.next();
-                    };
-
-                    if !self.non_cyclic_terms.contains(&offset) {
-                        if let Some(reps) = self.cyclic_terms.get(&addr).cloned() {
-                            if reps > 0 {
-                                self.cyclic_terms.insert(addr, reps - 1);
-                            } else {
-                                push_space_if_amb!(self, "...", {
-                                    self.append_str("...");
-                                });
-
-                                iter.stack().pop();
-                                self.cyclic_terms.insert(addr, 2);
-
-                                return None;
-                            }
-                        } else if self.machine_st.is_cyclic_term(addr) {
-                            self.cyclic_terms.insert(addr, 2);
-                        } else {
-                            self.record_children_as_non_cyclic(&addr);
-                            self.non_cyclic_terms.insert(offset);
-                        }
-                    } else {
-                        self.record_children_as_non_cyclic(&addr);
-                    }
-
+                    None
+                } else {
+                    self.printed_vars.insert(addr);
                     iter.next()
                 }
+            } else {
+                let offset = if let Some(offset) = functor_location(&addr) {
+                    offset
+                } else {
+                    return iter.next();
+                };
+
+                if self.non_cyclic_terms.contains(&offset) {
+                    self.record_children_as_non_cyclic(&addr);
+                } else if let Some(reps) = self.cyclic_terms.get(&addr).cloned() {
+                    if reps > 0 {
+                        self.cyclic_terms.insert(addr, reps - 1);
+                    } else {
+                        push_space_if_amb!(self, "...", {
+                            self.append_str("...");
+                        });
+
+                        iter.stack().pop();
+                        self.cyclic_terms.insert(addr, 2);
+
+                        return None;
+                    }
+                } else if self.machine_st.is_cyclic_term(addr) {
+                    self.cyclic_terms.insert(addr, 2);
+                } else {
+                    self.record_children_as_non_cyclic(&addr);
+                    self.non_cyclic_terms.insert(offset);
+                }
+
+                iter.next()
             }
         })
     }
@@ -963,11 +954,9 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
     }
 
     fn print_number(&mut self, n: Number, op: &Option<DirectedOp>) {
-        let add_brackets = if let Some(op) = op {
-            op.is_negative_sign() && n.is_positive()
-        } else {
-            false
-        };
+        let add_brackets = op
+            .clone()
+            .map_or(false, |op| op.is_negative_sign() && n.is_positive());
 
         if add_brackets {
             self.push_char('(');
@@ -1084,7 +1073,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         }
     }
 
-    fn print_proper_string(&mut self, buf: String, max_depth: usize) {
+    fn print_proper_string(&mut self, buf: &str, max_depth: usize) {
         self.push_char('"');
 
         let buf = if max_depth == 0 {
@@ -1134,7 +1123,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         let at_cdr = self.at_cdr(",");
 
         if !at_cdr && Addr::EmptyList == end_addr && !self.ignore_ops {
-            self.print_proper_string(buf, max_depth);
+            self.print_proper_string(&buf, max_depth);
             return;
         }
 
@@ -1175,11 +1164,11 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                 iter.stack().push(end_addr);
             }
         } else {
-            let switch = if !at_cdr {
+            let switch = if at_cdr {
+                false
+            } else {
                 self.push_char('[');
                 true
-            } else {
-                false
             };
 
             for c in buf_iter {
@@ -1261,27 +1250,28 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         negated_operand: bool,
         max_depth: usize,
     ) {
-        let add_brackets = if !self.ignore_ops {
-            negated_operand
-                || if let Some(ref op) = op {
-                    if self.numbervars && arity == 1 && name.as_str() == "$VAR" {
-                        !iter.immediate_leaf_has_property(|addr, heap| {
-                            match *heap.index_addr(&addr).as_ref() {
-                                HeapCellValue::Integer(ref n) => **n >= 0,
-                                HeapCellValue::Addr(Addr::Fixnum(n)) => n >= 0,
-                                HeapCellValue::Addr(Addr::Float(f)) => f >= OrderedFloat(0f64),
-                                HeapCellValue::Rational(ref r) => **r >= 0,
-                                _ => false,
-                            }
-                        }) && needs_bracketing(&spec, op)
-                    } else {
-                        needs_bracketing(&spec, op)
-                    }
-                } else {
-                    is_functor_redirect && spec.prec() >= 1000
-                }
-        } else {
+        let add_brackets = if self.ignore_ops {
             false
+        } else {
+            negated_operand
+                || op.as_ref().map_or_else(
+                    || is_functor_redirect && spec.prec() >= 1000,
+                    |op| {
+                        if self.numbervars && arity == 1 && name.as_str() == "$VAR" {
+                            !iter.immediate_leaf_has_property(|addr, heap| {
+                                match *heap.index_addr(&addr).as_ref() {
+                                    HeapCellValue::Integer(ref n) => **n >= 0,
+                                    HeapCellValue::Addr(Addr::Fixnum(n)) => n >= 0,
+                                    HeapCellValue::Addr(Addr::Float(f)) => f >= OrderedFloat(0_f64),
+                                    HeapCellValue::Rational(ref r) => **r >= 0,
+                                    _ => false,
+                                }
+                            }) && needs_bracketing(&spec, op)
+                        } else {
+                            needs_bracketing(&spec, op)
+                        }
+                    },
+                )
         };
 
         if add_brackets {
@@ -1290,7 +1280,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
 
         let ct = ClauseType::from(name, arity, Some(spec));
 
-        if self.format_clause(iter, max_depth, arity, ct) && add_brackets {
+        if self.format_clause(iter, max_depth, arity, &ct) && add_brackets {
             self.state_stack.push(TokenOrRedirect::Open);
 
             if let Some(ref op) = &op {
@@ -1308,7 +1298,10 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
         max_depth: usize,
     ) {
         let (ip, port) = if let Ok(addr) = tcp_listener.local_addr() {
-            (addr.ip(), Number::from(addr.port() as isize))
+            (
+                addr.ip(),
+                Number::from(isize::try_from(addr.port()).unwrap_or(isize::MAX)),
+            )
         } else {
             let disconnected_atom = clause_name!("$disconnected_tcp_listener");
             self.state_stack
@@ -1356,7 +1349,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
     fn handle_heap_term(
         &mut self,
         iter: &mut HCPreOrderIterator,
-        op: Option<DirectedOp>,
+        op: &Option<DirectedOp>,
         is_functor_redirect: bool,
         max_depth: usize,
     ) {
@@ -1386,7 +1379,7 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                 } else {
                     push_space_if_amb!(self, name.as_str(), {
                         let ct = ClauseType::from(name.clone(), arity, spec);
-                        self.format_clause(iter, max_depth, arity, ct);
+                        self.format_clause(iter, max_depth, arity, &ct);
                     });
                 }
             }
@@ -1496,21 +1489,21 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                     TokenOrRedirect::Op(atom, _) => self.print_op(atom.as_str()),
                     TokenOrRedirect::NumberedVar(num_var) => self.append_str(num_var.as_str()),
                     TokenOrRedirect::CompositeRedirect(max_depth, op) => {
-                        self.handle_heap_term(&mut iter, Some(op), false, max_depth)
+                        self.handle_heap_term(&mut iter, &Some(op), false, max_depth)
                     }
                     TokenOrRedirect::FunctorRedirect(max_depth) => {
-                        self.handle_heap_term(&mut iter, None, true, max_depth)
+                        self.handle_heap_term(&mut iter, &None, true, max_depth)
                     }
                     TokenOrRedirect::Close => self.push_char(')'),
                     TokenOrRedirect::IpAddr(ip) => self.print_ip_addr(ip),
                     TokenOrRedirect::RawPtr(ptr) => self.print_raw_ptr(ptr),
                     TokenOrRedirect::Open => self.push_char('('),
                     TokenOrRedirect::OpenList(delimit) => {
-                        if !self.at_cdr(",") {
-                            self.push_char('[');
-                        } else {
+                        if self.at_cdr(",") {
                             let (_, max_depth) = delimit.get();
                             delimit.set((false, max_depth));
+                        } else {
+                            self.push_char('[');
                         }
                     }
                     TokenOrRedirect::CloseList(delimit) => {
@@ -1525,11 +1518,11 @@ impl<'a, Outputter: HCValueOutputter> HCPrinter<'a, Outputter> {
                     TokenOrRedirect::LeftCurly => self.push_char('{'),
                     TokenOrRedirect::RightCurly => self.push_char('}'),
                 }
-            } else if !iter.stack().is_empty() {
-                let spec = self.toplevel_spec.take();
-                self.handle_heap_term(&mut iter, spec, false, self.max_depth);
-            } else {
+            } else if iter.stack().is_empty() {
                 break;
+            } else {
+                let spec = self.toplevel_spec.take();
+                self.handle_heap_term(&mut iter, &spec, false, self.max_depth);
             }
         }
 

@@ -1,9 +1,9 @@
-use crate::prolog_parser_rebis::ast::*;
+use crate::prolog_parser_rebis::ast::{GenContext, RegType, Term, Var, VarReg};
 
-use crate::fixtures::*;
-use crate::forms::*;
-use crate::machine::machine_indices::*;
-use crate::targets::*;
+use crate::fixtures::{VarData, VarStatus, VariableFixtures};
+use crate::forms::Level;
+use crate::machine::machine_indices::AllocVarDict;
+use crate::targets::CompilationTarget;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -85,7 +85,7 @@ pub trait Allocator<'a> {
     fn get(&self, var: Rc<Var>) -> RegType {
         self.bindings()
             .get(&var)
-            .map_or(temp_v!(0), |v| v.as_reg_type())
+            .map_or(temp_v!(0), VarData::as_reg_type)
     }
 
     fn is_unbound(&self, var: Rc<Var>) -> bool {
@@ -94,8 +94,7 @@ pub trait Allocator<'a> {
 
     fn record_register(&mut self, var: Rc<Var>, r: RegType) {
         match *self.bindings_mut().get_mut(&var).unwrap() {
-            VarData::Temp(_, ref mut s, _) => *s = r.reg_num(),
-            VarData::Perm(ref mut s) => *s = r.reg_num(),
+            VarData::Temp(_, ref mut s, _) | VarData::Perm(ref mut s) => *s = r.reg_num(),
         }
     }
 }

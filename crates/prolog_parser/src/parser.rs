@@ -1,6 +1,11 @@
-use ast::*;
-use lexer::*;
-use tabled_rc::*;
+use ast::{
+    is_fx, is_fy, is_infix, is_lterm, is_negate, is_op, is_postfix, is_prefix, is_term, is_xf,
+    is_xfx, is_xfy, is_yf, is_yfx, unfold_by_str, Atom, ClauseName, CompositeOpDir, Constant,
+    Fixity, MachineFlags, OpDirValue, ParserError, ParsingStream, SharedOpDesc, Specifier, Term,
+    DELIMITER, FX, FY, LTERM, NEGATIVE_SIGN, TERM, XF, XFX, XFY, YF, YFX,
+};
+use lexer::{Lexer, Token};
+use tabled_rc::{TabledData, TabledRc};
 
 use ordered_float::OrderedFloat;
 
@@ -50,6 +55,7 @@ struct TokenDesc {
     spec: u32,
 }
 
+#[must_use]
 pub fn get_clause_spec(
     name: ClauseName,
     arity: usize,
@@ -79,6 +85,7 @@ pub fn get_clause_spec(
     None
 }
 
+#[must_use]
 pub fn get_op_desc(name: ClauseName, op_dir: &CompositeOpDir) -> Option<OpDesc> {
     let mut op_desc = OpDesc {
         pre: 0,
@@ -229,16 +236,19 @@ impl<'a, R: Read> Parser<'a, R> {
     }
 
     #[inline]
+    #[must_use]
     pub fn line_num(&self) -> usize {
         self.lexer.line_num
     }
 
     #[inline]
+    #[must_use]
     pub fn col_num(&self) -> usize {
         self.lexer.col_num
     }
 
     #[inline]
+    #[must_use]
     pub fn get_atom_tbl(&self) -> TabledData<Atom> {
         self.lexer.atom_tbl.clone()
     }
@@ -261,7 +271,7 @@ impl<'a, R: Read> Parser<'a, R> {
                     self.terms.push(term);
                     None
                 }
-                _ => None,
+                None => None,
             },
             _ => None,
         }
@@ -313,7 +323,7 @@ impl<'a, R: Read> Parser<'a, R> {
         assoc: u32,
         op_dir_val: Option<&OpDirValue>,
     ) {
-        let spec = op_dir_val.map(|op_dir_val| op_dir_val.shared_op_desc());
+        let spec = op_dir_val.map(OpDirValue::shared_op_desc);
 
         self.terms
             .push(Term::Constant(Cell::default(), Constant::Atom(atom, spec)));
@@ -384,9 +394,8 @@ impl<'a, R: Read> Parser<'a, R> {
                         } else if is_xfy(desc2.spec) && affirm_xfy(priority, desc2, desc3, desc1) {
                             self.push_binary_op(desc2, TERM);
                             continue;
-                        } else {
-                            self.stack.push(desc3);
                         }
+                        self.stack.push(desc3);
                     }
 
                     if is_yf(desc1.spec) && affirm_yf(desc1, desc2) {
@@ -401,10 +410,9 @@ impl<'a, R: Read> Parser<'a, R> {
                     } else if is_fx(desc2.spec) && affirm_fx(priority, desc1, desc2) {
                         self.push_unary_op(desc2, TERM, FX);
                         continue;
-                    } else {
-                        self.stack.push(desc2);
-                        self.stack.push(desc1);
                     }
+                    self.stack.push(desc2);
+                    self.stack.push(desc1);
                 } else {
                     self.stack.push(desc1);
                 }
@@ -434,9 +442,8 @@ impl<'a, R: Read> Parser<'a, R> {
 
                 if let TokenType::Comma = desc.tt {
                     continue;
-                } else {
-                    return None;
                 }
+                return None;
             }
         }
 
@@ -515,6 +522,9 @@ impl<'a, R: Read> Parser<'a, R> {
         false
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there were any errors when the lexer scanned for layout characters
     pub fn devour_whitespace(&mut self) -> Result<(), ParserError> {
         self.lexer.scan_for_layout()?;
         Ok(())
@@ -607,17 +617,14 @@ impl<'a, R: Read> Parser<'a, R> {
         let idx = self.stack.len() - 2;
         let list_len = self.stack.len() - 2 * arity;
 
-        let end_term = if self.stack[idx].tt != TokenType::HeadTailSeparator {
-            Term::Constant(Cell::default(), Constant::EmptyList)
-        } else {
-            let term = match self.terms.pop() {
-                Some(term) => term,
-                _ => {
-                    return Err(ParserError::IncompleteReduction(
-                        self.lexer.line_num,
-                        self.lexer.col_num,
-                    ))
-                }
+        let end_term = if self.stack[idx].tt == TokenType::HeadTailSeparator {
+            let term = if let Some(term) = self.terms.pop() {
+                term
+            } else {
+                return Err(ParserError::IncompleteReduction(
+                    self.lexer.line_num,
+                    self.lexer.col_num,
+                ));
             };
 
             if self.stack[idx].priority > 1000 {
@@ -627,11 +634,13 @@ impl<'a, R: Read> Parser<'a, R> {
             arity -= 1;
 
             term
+        } else {
+            Term::Constant(Cell::default(), Constant::EmptyList)
         };
 
-        let idx = self.terms.len() - arity;
+        let idx2 = self.terms.len() - arity;
 
-        let list = self.terms.drain(idx..).rev().fold(end_term, |acc, t| {
+        let list = self.terms.drain(idx2..).rev().fold(end_term, |acc, t| {
             Term::Cons(Cell::default(), Box::new(t), Box::new(acc))
         });
 
@@ -678,14 +687,13 @@ impl<'a, R: Read> Parser<'a, R> {
                         oc.priority = 0;
                         oc.spec = TERM;
 
-                        let term = match self.terms.pop() {
-                            Some(term) => term,
-                            _ => {
-                                return Err(ParserError::IncompleteReduction(
-                                    self.lexer.line_num,
-                                    self.lexer.col_num,
-                                ))
-                            }
+                        let term = if let Some(term) = self.terms.pop() {
+                            term
+                        } else {
+                            return Err(ParserError::IncompleteReduction(
+                                self.lexer.line_num,
+                                self.lexer.col_num,
+                            ));
                         };
 
                         self.terms.push(Term::Clause(
@@ -924,8 +932,7 @@ impl<'a, R: Read> Parser<'a, R> {
                  * See: http://www.complang.tuwien.ac.at/ulrich/iso-prolog/dtc2#Res_A78
                  */
                 let (priority, spec) = get_op_desc(clause_name!("|"), op_dir)
-                    .map(|OpDesc { inf, spec, .. }| (inf, spec))
-                    .unwrap_or((1000, DELIMITER));
+                    .map_or((1000, DELIMITER), |OpDesc { inf, spec, .. }| (inf, spec));
 
                 self.reduce_op(priority);
                 self.shift(Token::HeadTailSeparator, priority, spec);
@@ -953,11 +960,17 @@ impl<'a, R: Read> Parser<'a, R> {
         Ok(())
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there were any errors while determining if the parser are at an EOF
     #[inline]
     pub fn eof(&mut self) -> Result<bool, ParserError> {
         self.lexer.eof()
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there were any errors while reading a term
     pub fn read_term(&mut self, op_dir: &CompositeOpDir) -> Result<Term, ParserError> {
         self.tokens = read_tokens(&mut self.lexer)?;
 
@@ -974,8 +987,14 @@ impl<'a, R: Read> Parser<'a, R> {
             ));
         }
 
-        match self.terms.pop() {
-            Some(term) => {
+        self.terms.pop().map_or_else(
+            || {
+                Err(ParserError::IncompleteReduction(
+                    self.lexer.line_num,
+                    self.lexer.col_num,
+                ))
+            },
+            |term| {
                 if self.terms.is_empty() {
                     Ok(term)
                 } else {
@@ -984,14 +1003,13 @@ impl<'a, R: Read> Parser<'a, R> {
                         self.lexer.col_num,
                     ))
                 }
-            }
-            _ => Err(ParserError::IncompleteReduction(
-                self.lexer.line_num,
-                self.lexer.col_num,
-            )),
-        }
+            },
+        )
     }
 
+    /// # Errors
+    ///
+    /// Will return `Err` if there were any errors while reading a list of terms
     pub fn read(&mut self, op_dir: &CompositeOpDir) -> Result<Vec<Term>, ParserError> {
         let mut terms = Vec::new();
 
