@@ -2,7 +2,7 @@ use prolog_parser::clause_name;
 
 use crate::codegen::*;
 use crate::debray_allocator::*;
-use crate::indexing::{IndexingCodePtr, merge_clause_index, remove_index};
+use crate::indexing::{merge_clause_index, remove_index, IndexingCodePtr};
 use crate::machine::load_state::*;
 use crate::machine::loader::*;
 use crate::machine::preprocessor::*;
@@ -103,11 +103,27 @@ fn lower_bound_of_target_clause(skeleton: &PredicateSkeleton, target_pos: usize)
         return target_pos - 1;
     }
 
-    for index in (0..target_pos - 1).rev() {
+    let mut index_loc_opt = None;
+
+    for index in (0..target_pos).rev() {
         let current_arg_num = skeleton.clauses[index].opt_arg_index_key.arg_num();
 
         if current_arg_num == 0 || current_arg_num != arg_num {
             return index + 1;
+        }
+
+        if let Some(index_loc) = index_loc_opt {
+            let current_index_loc = skeleton.clauses[index]
+                .opt_arg_index_key
+                .switch_on_term_loc();
+
+            if Some(index_loc) != current_index_loc {
+                return index + 1;
+            }
+        } else {
+            index_loc_opt = skeleton.clauses[index]
+                .opt_arg_index_key
+                .switch_on_term_loc();
         }
     }
 
@@ -130,8 +146,8 @@ fn derelictize_try_me_else(
             retraction_info.push_record(RetractionRecord::ReplacedDynamicElseOffset(index, *o));
             Some(mem::replace(o, 0))
         }
-        Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Fail(_))) |
-        Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Fail(_))) => None,
+        Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Fail(_)))
+        | Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Fail(_))) => None,
         Line::Choice(ChoiceInstruction::TryMeElse(0)) => None,
         Line::Choice(ChoiceInstruction::TryMeElse(ref mut o)) => {
             retraction_info.push_record(RetractionRecord::ModifiedTryMeElse(index, *o));
@@ -181,14 +197,11 @@ fn merge_indices(
     }
 }
 
-fn find_outer_choice_instr(
-    code: &Code,
-    mut index: usize,
-) -> usize {
+fn find_outer_choice_instr(code: &Code, mut index: usize) -> usize {
     loop {
         match &code[index] {
-            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(i))) |
-            Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Next(i)))
+            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(i)))
+            | Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Next(i)))
                 if *i > 0 =>
             {
                 index += i;
@@ -200,22 +213,30 @@ fn find_outer_choice_instr(
     }
 }
 
-fn find_inner_choice_instr(
-    code: &Code,
-    mut index: usize,
-    index_loc: usize,
-) -> usize {
+fn find_inner_choice_instr(code: &Code, mut index: usize, index_loc: usize) -> usize {
     loop {
         match &code[index] {
-            Line::Choice(ChoiceInstruction::TryMeElse(o)) |
-            Line::Choice(ChoiceInstruction::RetryMeElse(o)) => {
+            Line::Choice(ChoiceInstruction::TryMeElse(o))
+            | Line::Choice(ChoiceInstruction::RetryMeElse(o)) => {
                 if *o > 0 {
                     return index;
                 } else {
                     index = index_loc;
                 }
             }
-            &Line::Choice(ChoiceInstruction::DynamicElse(_, _, next_or_fail)) |
+            &Line::Choice(ChoiceInstruction::DynamicElse(_, _, next_or_fail)) => match next_or_fail
+            {
+                NextOrFail::Next(i) => {
+                    if i == 0 {
+                        index = index_loc;
+                    } else {
+                        return index;
+                    }
+                }
+                NextOrFail::Fail(_) => {
+                    index = index_loc;
+                }
+            },
             &Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, next_or_fail)) => {
                 match next_or_fail {
                     NextOrFail::Next(i) => {
@@ -234,28 +255,24 @@ fn find_inner_choice_instr(
                 return index;
             }
             Line::IndexingCode(indexing_code) => match &indexing_code[0] {
-                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, v, ..)) => {
-                    match v {
-                        IndexingCodePtr::External(v) => {
+                IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, v, ..)) => match v {
+                    IndexingCodePtr::External(v) => {
+                        index += v;
+                    }
+                    IndexingCodePtr::DynamicExternal(v) => match &code[index + v] {
+                        &Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                            _,
+                            _,
+                            NextOrFail::Next(0),
+                        )) => {
+                            return index + v;
+                        }
+                        _ => {
                             index += v;
                         }
-                        IndexingCodePtr::DynamicExternal(v) => {
-                            match &code[index + v] {
-                                &Line::Choice(ChoiceInstruction::DynamicInternalElse(
-                                    _,
-                                    _,
-                                    NextOrFail::Next(0),
-                                )) => {
-                                    return index + v;
-                                }
-                                _ => {
-                                    index += v;
-                                }
-                            }
-                        }
-                        _ => unreachable!()
-                    }
-                }
+                    },
+                    _ => unreachable!(),
+                },
                 _ => {
                     unreachable!();
                 }
@@ -399,10 +416,10 @@ fn delete_from_skeleton(
     retraction_info: &mut RetractionInfo,
 ) -> usize {
     let clause_index_info = skeleton.clauses.remove(target_pos);
-    let clause_clause_loc = skeleton.clause_clause_locs.remove(target_pos);
+    let clause_clause_loc = skeleton.core.clause_clause_locs.remove(target_pos);
 
-    if target_pos < skeleton.clause_assert_margin {
-        skeleton.clause_assert_margin -= 1;
+    if target_pos < skeleton.core.clause_assert_margin {
+        skeleton.core.clause_assert_margin -= 1;
     }
 
     retraction_info.push_record(RetractionRecord::RemovedSkeletonClause(
@@ -430,29 +447,36 @@ fn blunt_leading_choice_instr(
 
                 return instr_loc;
             }
-            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(_))) |
-            Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Next(_))) => {
+            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(_)))
+            | Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Next(_))) => {
                 return instr_loc;
             }
             &mut Line::Choice(ChoiceInstruction::DynamicElse(b, d, NextOrFail::Fail(o))) => {
-                retraction_info.push_record(
-                    RetractionRecord::AppendedNextOrFail(instr_loc, NextOrFail::Fail(o)),
-                );
+                retraction_info.push_record(RetractionRecord::AppendedNextOrFail(
+                    instr_loc,
+                    NextOrFail::Fail(o),
+                ));
 
-                code[instr_loc] = Line::Choice(
-                    ChoiceInstruction::DynamicElse(b, d, NextOrFail::Next(0)),
-                );
+                code[instr_loc] =
+                    Line::Choice(ChoiceInstruction::DynamicElse(b, d, NextOrFail::Next(0)));
 
                 return instr_loc;
             }
-            &mut Line::Choice(ChoiceInstruction::DynamicInternalElse(b, d, NextOrFail::Fail(o))) => {
-                retraction_info.push_record(
-                    RetractionRecord::AppendedNextOrFail(instr_loc, NextOrFail::Fail(o)),
-                );
+            &mut Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                b,
+                d,
+                NextOrFail::Fail(o),
+            )) => {
+                retraction_info.push_record(RetractionRecord::AppendedNextOrFail(
+                    instr_loc,
+                    NextOrFail::Fail(o),
+                ));
 
-                code[instr_loc] = Line::Choice(
-                    ChoiceInstruction::DynamicInternalElse(b, d, NextOrFail::Next(0)),
-                );
+                code[instr_loc] = Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                    b,
+                    d,
+                    NextOrFail::Next(0),
+                ));
 
                 return instr_loc;
             }
@@ -488,21 +512,19 @@ fn set_switch_var_offset_to_choice_instr(
     let target_indexing_line = to_indexing_line_mut(&mut code[index_loc]).unwrap();
 
     let v = match &target_indexing_line[0] {
-        &IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, v, ..)) => {
-            match v {
-                IndexingCodePtr::External(v) | IndexingCodePtr::DynamicExternal(v) => v,
-                _ => unreachable!()
-            }
-        }
+        &IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, v, ..)) => match v {
+            IndexingCodePtr::External(v) | IndexingCodePtr::DynamicExternal(v) => v,
+            _ => unreachable!(),
+        },
         _ => {
             unreachable!();
         }
     };
 
     match &code[index_loc + v] {
-        Line::Choice(ChoiceInstruction::TryMeElse(_)) |
-        Line::Choice(ChoiceInstruction::DynamicElse(..)) |
-        Line::Choice(ChoiceInstruction::DynamicInternalElse(..)) => {}
+        Line::Choice(ChoiceInstruction::TryMeElse(_))
+        | Line::Choice(ChoiceInstruction::DynamicElse(..))
+        | Line::Choice(ChoiceInstruction::DynamicInternalElse(..)) => {}
         _ => {
             set_switch_var_offset(code, index_loc, offset, retraction_info);
         }
@@ -519,17 +541,13 @@ fn set_switch_var_offset(
     let target_indexing_line = to_indexing_line_mut(&mut code[index_loc]).unwrap();
 
     let old_v = match &mut target_indexing_line[0] {
-        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, ref mut v, ..)) => {
-            match *v {
-                IndexingCodePtr::DynamicExternal(_) => {
-                    mem::replace(v, IndexingCodePtr::DynamicExternal(offset))
-                }
-                IndexingCodePtr::External(_) => {
-                    mem::replace(v, IndexingCodePtr::External(offset))
-                }
-                _ => unreachable!()
+        IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(_, ref mut v, ..)) => match *v {
+            IndexingCodePtr::DynamicExternal(_) => {
+                mem::replace(v, IndexingCodePtr::DynamicExternal(offset))
             }
-        }
+            IndexingCodePtr::External(_) => mem::replace(v, IndexingCodePtr::External(offset)),
+            _ => unreachable!(),
+        },
         _ => {
             unreachable!()
         }
@@ -546,33 +564,33 @@ fn internalize_choice_instr_at(
     retraction_info: &mut RetractionInfo,
 ) {
     match &mut code[instr_loc] {
-        Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Fail(_))) |
-        Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Fail(_))) => {
-        }
+        Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Fail(_)))
+        | Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Fail(_))) => {}
         Line::Choice(ChoiceInstruction::DynamicElse(_, _, ref mut o @ NextOrFail::Next(0))) => {
             retraction_info.push_record(RetractionRecord::ReplacedDynamicElseOffset(instr_loc, 0));
             *o = NextOrFail::Fail(0);
         }
         &mut Line::Choice(ChoiceInstruction::DynamicElse(b, d, NextOrFail::Next(o))) => {
-            retraction_info.push_record(
-                RetractionRecord::AppendedNextOrFail(instr_loc, NextOrFail::Next(o)),
-            );
+            retraction_info.push_record(RetractionRecord::AppendedNextOrFail(
+                instr_loc,
+                NextOrFail::Next(o),
+            ));
 
             match &mut code[instr_loc + o] {
                 Line::Control(ControlInstruction::RevJmpBy(p)) if *p == 0 => {
-                    code[instr_loc] = Line::Choice(
-                        ChoiceInstruction::DynamicElse(b, d, NextOrFail::Fail(o)),
-                    );
+                    code[instr_loc] =
+                        Line::Choice(ChoiceInstruction::DynamicElse(b, d, NextOrFail::Fail(o)));
                 }
                 _ => {
-                    code[instr_loc] = Line::Choice(
-                        ChoiceInstruction::DynamicElse(b, d, NextOrFail::Next(o)),
-                    );
+                    code[instr_loc] =
+                        Line::Choice(ChoiceInstruction::DynamicElse(b, d, NextOrFail::Next(o)));
                 }
             }
         }
         Line::Choice(ChoiceInstruction::DynamicInternalElse(
-            _, _, ref mut o @ NextOrFail::Next(0),
+            _,
+            _,
+            ref mut o @ NextOrFail::Next(0),
         )) => {
             retraction_info.push_record(RetractionRecord::ReplacedDynamicElseOffset(instr_loc, 0));
             *o = NextOrFail::Fail(0);
@@ -582,14 +600,18 @@ fn internalize_choice_instr_at(
 
             match &mut code[instr_loc + o] {
                 Line::Control(ControlInstruction::RevJmpBy(p)) if *p == 0 => {
-                    code[instr_loc] = Line::Choice(
-                        ChoiceInstruction::DynamicInternalElse(b, d, NextOrFail::Fail(o)),
-                    );
+                    code[instr_loc] = Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                        b,
+                        d,
+                        NextOrFail::Fail(o),
+                    ));
                 }
                 _ => {
-                    code[instr_loc] = Line::Choice(
-                        ChoiceInstruction::DynamicInternalElse(b, d, NextOrFail::Next(o)),
-                    );
+                    code[instr_loc] = Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                        b,
+                        d,
+                        NextOrFail::Next(o),
+                    ));
                 }
             }
         }
@@ -626,8 +648,8 @@ fn thread_choice_instr_at_to(
 ) {
     loop {
         match &mut code[instr_loc] {
-            Line::Choice(ChoiceInstruction::TryMeElse(ref mut o)) |
-            Line::Choice(ChoiceInstruction::RetryMeElse(ref mut o))
+            Line::Choice(ChoiceInstruction::TryMeElse(ref mut o))
+            | Line::Choice(ChoiceInstruction::RetryMeElse(ref mut o))
                 if target_loc >= instr_loc =>
             {
                 retraction_info.push_record(RetractionRecord::ReplacedChoiceOffset(instr_loc, *o));
@@ -635,20 +657,23 @@ fn thread_choice_instr_at_to(
                 *o = target_loc - instr_loc;
                 return;
             }
-            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(ref mut o))) |
-            Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Next(ref mut o)))
-                if target_loc >= instr_loc =>
-            {
-                retraction_info.push_record(RetractionRecord::ReplacedDynamicElseOffset(instr_loc, *o));
+            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(ref mut o)))
+            | Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                _,
+                _,
+                NextOrFail::Next(ref mut o),
+            )) if target_loc >= instr_loc => {
+                retraction_info
+                    .push_record(RetractionRecord::ReplacedDynamicElseOffset(instr_loc, *o));
                 *o = target_loc - instr_loc;
                 return;
             }
-            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(ref mut o))) |
-            Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Next(ref mut o))) => {
+            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Next(o)))
+            | Line::Choice(ChoiceInstruction::DynamicInternalElse(_, _, NextOrFail::Next(o))) => {
                 instr_loc += *o;
             }
-            Line::Choice(ChoiceInstruction::TryMeElse(ref mut o)) |
-            Line::Choice(ChoiceInstruction::RetryMeElse(ref mut o)) => {
+            Line::Choice(ChoiceInstruction::TryMeElse(o))
+            | Line::Choice(ChoiceInstruction::RetryMeElse(o)) => {
                 instr_loc += *o;
             }
             Line::Control(ControlInstruction::RevJmpBy(ref mut o)) if instr_loc >= target_loc => {
@@ -657,36 +682,37 @@ fn thread_choice_instr_at_to(
                 *o = instr_loc - target_loc;
                 return;
             }
+            &mut Line::Control(ControlInstruction::RevJmpBy(o)) => {
+                instr_loc -= o;
+            }
             &mut Line::Choice(ChoiceInstruction::DynamicElse(birth, death, ref mut fail))
                 if target_loc >= instr_loc =>
             {
-                retraction_info.push_record(
-                    RetractionRecord::AppendedNextOrFail(instr_loc, *fail),
-                );
+                retraction_info.push_record(RetractionRecord::AppendedNextOrFail(instr_loc, *fail));
 
-                code[instr_loc] =
-                    Line::Choice(ChoiceInstruction::DynamicElse(
-                        birth, death, NextOrFail::Next(target_loc - instr_loc),
-                    ));
+                code[instr_loc] = Line::Choice(ChoiceInstruction::DynamicElse(
+                    birth,
+                    death,
+                    NextOrFail::Next(target_loc - instr_loc),
+                ));
 
                 return;
             }
-            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Fail(o)))
-                if *o > 0 =>
-            {
+            Line::Choice(ChoiceInstruction::DynamicElse(_, _, NextOrFail::Fail(o))) if *o > 0 => {
                 instr_loc += *o;
             }
-            &mut Line::Choice(ChoiceInstruction::DynamicInternalElse(birth, death, ref mut fail))
-                if target_loc >= instr_loc =>
-            {
-                retraction_info.push_record(
-                    RetractionRecord::AppendedNextOrFail(instr_loc, *fail),
-                );
+            &mut Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                birth,
+                death,
+                ref mut fail,
+            )) if target_loc >= instr_loc => {
+                retraction_info.push_record(RetractionRecord::AppendedNextOrFail(instr_loc, *fail));
 
-                code[instr_loc] =
-                    Line::Choice(ChoiceInstruction::DynamicInternalElse(
-                        birth, death, NextOrFail::Next(target_loc - instr_loc),
-                    ));
+                code[instr_loc] = Line::Choice(ChoiceInstruction::DynamicInternalElse(
+                    birth,
+                    death,
+                    NextOrFail::Next(target_loc - instr_loc),
+                ));
 
                 return;
             }
@@ -830,26 +856,17 @@ fn remove_leading_unindexed_clause(
     }
 }
 
-fn find_dynamic_outer_choice_instr(
-    code: &Code,
-    index_loc: usize,
-) -> usize {
+fn find_dynamic_outer_choice_instr(code: &Code, index_loc: usize) -> usize {
     match &code[index_loc] {
-        Line::IndexingCode(indexing_code) => {
-            match &indexing_code[0] {
-                &IndexingLine::Indexing(
-                    IndexingInstruction::SwitchOnTerm(
-                        _,
-                        IndexingCodePtr::DynamicExternal(v),
-                        ..,
-                    )
-                ) => {
-                    index_loc + v - 2
-                }
-                _ => unreachable!()
-            }
-        }
-        _ => unreachable!()
+        Line::IndexingCode(indexing_code) => match &indexing_code[0] {
+            &IndexingLine::Indexing(IndexingInstruction::SwitchOnTerm(
+                _,
+                IndexingCodePtr::DynamicExternal(v),
+                ..,
+            )) => index_loc + v - 2,
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
     }
 }
 
@@ -869,7 +886,7 @@ fn prepend_compiled_clause(
     let head_arg_num = skeleton.clauses[1].opt_arg_index_key.arg_num();
 
     let settings = CodeGenSettings {
-        global_clock_tick: if skeleton.is_dynamic {
+        global_clock_tick: if skeleton.core.is_dynamic {
             Some(global_clock_tick)
         } else {
             None
@@ -895,7 +912,7 @@ fn prepend_compiled_clause(
                     skeleton.clauses[0].clause_start,
                 ));
 
-                let outer_thread_choice_loc = if skeleton.is_dynamic {
+                let outer_thread_choice_loc = if skeleton.core.is_dynamic {
                     find_dynamic_outer_choice_instr(code, index_loc)
                 } else {
                     skeleton.clauses[1].clause_start - 2
@@ -996,7 +1013,7 @@ fn prepend_compiled_clause(
 
                 code.extend(prepend_queue.into_iter());
 
-                if skeleton.is_dynamic {
+                if skeleton.core.is_dynamic {
                     clause_loc
                 } else {
                     clause_loc + (outer_thread_choice_offset == 0) as usize
@@ -1010,15 +1027,11 @@ fn prepend_compiled_clause(
 
                 let old_clause_start =
                     match skeleton.clauses[1].opt_arg_index_key.switch_on_term_loc() {
-                        Some(index_loc) if skeleton.is_dynamic => {
+                        Some(index_loc) if skeleton.core.is_dynamic => {
                             find_dynamic_outer_choice_instr(code, index_loc)
                         }
-                        Some(_) => {
-                            skeleton.clauses[1].clause_start - 2
-                        }
-                        None => {
-                            skeleton.clauses[1].clause_start
-                        }
+                        Some(_) => skeleton.clauses[1].clause_start - 2,
+                        None => skeleton.clauses[1].clause_start,
                     };
 
                 let inner_thread_rev_offset =
@@ -1035,7 +1048,9 @@ fn prepend_compiled_clause(
                         *o = prepend_queue_len - 2;
                     }
                     Line::Choice(ChoiceInstruction::DynamicInternalElse(
-                        _, _, ref mut o @ NextOrFail::Next(0),
+                        _,
+                        _,
+                        ref mut o @ NextOrFail::Next(0),
                     )) => {
                         *o = NextOrFail::Fail(prepend_queue_len - 2);
                     }
@@ -1048,9 +1063,7 @@ fn prepend_compiled_clause(
                     inner_thread_rev_offset,
                 )));
 
-                prepend_queue.push_front(Line::Choice(
-                    settings.try_me_else(prepend_queue.len()),
-                ));
+                prepend_queue.push_front(Line::Choice(settings.try_me_else(prepend_queue.len())));
 
                 // prepend_queue is now:
                 //      | TryMeElse(N_2)
@@ -1071,7 +1084,7 @@ fn prepend_compiled_clause(
             Some(index_loc) => {
                 prepend_queue.extend(clause_code.drain(1..));
 
-                let old_clause_start = if skeleton.is_dynamic {
+                let old_clause_start = if skeleton.core.is_dynamic {
                     find_dynamic_outer_choice_instr(code, index_loc)
                 } else {
                     skeleton.clauses[1].clause_start - 2
@@ -1084,9 +1097,7 @@ fn prepend_compiled_clause(
                     inner_thread_rev_offset,
                 )));
 
-                prepend_queue.push_front(Line::Choice(
-                    settings.try_me_else(prepend_queue.len()),
-                ));
+                prepend_queue.push_front(Line::Choice(settings.try_me_else(prepend_queue.len())));
 
                 // prepend_queue is now:
                 //      | TryMeElse(N_2)
@@ -1114,9 +1125,7 @@ fn prepend_compiled_clause(
                     inner_thread_rev_offset,
                 )));
 
-                prepend_queue.push_front(Line::Choice(
-                    settings.try_me_else(prepend_queue.len()),
-                ));
+                prepend_queue.push_front(Line::Choice(settings.try_me_else(prepend_queue.len())));
 
                 // prepend_queue is now:
                 //      | TryMeElse(N_2)
@@ -1135,7 +1144,7 @@ fn prepend_compiled_clause(
         }
     };
 
-    if skeleton.is_dynamic {
+    if skeleton.core.is_dynamic {
         IndexPtr::DynamicIndex(clause_loc)
     } else {
         IndexPtr::Index(clause_loc)
@@ -1154,7 +1163,7 @@ fn append_compiled_clause(
     let lower_bound = lower_bound_of_target_clause(skeleton, target_pos);
 
     let settings = CodeGenSettings {
-        global_clock_tick: if skeleton.is_dynamic {
+        global_clock_tick: if skeleton.core.is_dynamic {
             Some(global_clock_tick)
         } else {
             None
@@ -1203,10 +1212,7 @@ fn append_compiled_clause(
                 index_loc,
             );
 
-            let target_pos_clause_start = find_outer_choice_instr(
-                code,
-                target_pos_clause_start,
-            );
+            let target_pos_clause_start = find_outer_choice_instr(code, target_pos_clause_start);
 
             if lower_bound + 1 == target_pos {
                 set_switch_var_offset_to_choice_instr(
@@ -1215,6 +1221,10 @@ fn append_compiled_clause(
                     target_pos_clause_start - index_loc,
                     retraction_info,
                 );
+
+                if lower_bound == 0 && !skeleton.core.is_dynamic {
+                    code_ptr_opt = Some(target_pos_clause_start);
+                }
             }
 
             target_pos_clause_start // skeleton.clauses[target_pos - 1].clause_start
@@ -1224,6 +1234,23 @@ fn append_compiled_clause(
 
             skeleton.clauses[target_pos].opt_arg_index_key += clause_loc;
             code.extend(clause_code.drain(1..));
+
+            match skeleton.clauses[target_pos]
+                .opt_arg_index_key
+                .switch_on_term_loc()
+            {
+                Some(index_loc) => {
+                    // point to the inner-threaded TryMeElse(0) if target_pos is
+                    // indexed, and make switch_on_term point one line after it in
+                    // its variable offset.
+                    skeleton.clauses[target_pos].clause_start += 2;
+
+                    if !skeleton.core.is_dynamic {
+                        set_switch_var_offset(code, index_loc, 2, retraction_info);
+                    }
+                }
+                None => {}
+            }
 
             match skeleton.clauses[lower_bound]
                 .opt_arg_index_key
@@ -1241,23 +1268,6 @@ fn append_compiled_clause(
                         code_ptr_opt = Some(skeleton.clauses[lower_bound].clause_start);
                     }
 
-                    match skeleton.clauses[target_pos]
-                        .opt_arg_index_key
-                        .switch_on_term_loc()
-                    {
-                        Some(index_loc) => {
-                            // point to the inner-threaded TryMeElse(0) if target_pos is
-                            // indexed, and make switch_on_term point one line after it in
-                            // its variable offset.
-                            skeleton.clauses[target_pos].clause_start += 2;
-
-                            if !skeleton.is_dynamic {
-                                set_switch_var_offset(code, index_loc, 2, retraction_info);
-                            }
-                        }
-                        None => {}
-                    }
-
                     find_outer_choice_instr(code, skeleton.clauses[lower_bound].clause_start)
                 }
             }
@@ -1267,7 +1277,7 @@ fn append_compiled_clause(
     thread_choice_instr_at_to(code, threaded_choice_instr_loc, clause_loc, retraction_info);
 
     code_ptr_opt.map(|p| {
-        if skeleton.is_dynamic {
+        if skeleton.core.is_dynamic {
             IndexPtr::DynamicIndex(p)
         } else {
             IndexPtr::Index(p)
@@ -1324,7 +1334,10 @@ impl<'a> LoadState<'a> {
 
             if let Some(path_str) = load_context.path.to_str() {
                 if !path_str.is_empty() {
-                    return Some(clause_name!(path_str.to_string(), self.wam.machine_st.atom_tbl));
+                    return Some(clause_name!(
+                        path_str.to_string(),
+                        self.wam.machine_st.atom_tbl
+                    ));
                 }
             }
         }
@@ -1366,10 +1379,8 @@ impl<'a> LoadState<'a> {
         predicates: &mut PredicateQueue,
         settings: CodeGenSettings,
     ) -> Result<CodeIndex, SessionError> {
-        let code_index = self.get_or_insert_code_index(
-            key.clone(),
-            predicates.compilation_target.clone(),
-        );
+        let code_index =
+            self.get_or_insert_code_index(key.clone(), predicates.compilation_target.clone());
 
         let code_len = self.wam.code_repo.code.len();
         let mut code_ptr = code_len;
@@ -1380,7 +1391,7 @@ impl<'a> LoadState<'a> {
         let mut clauses = vec![];
         let mut preprocessor = Preprocessor::new(self.wam.machine_st.flags);
 
-        for term in predicates.predicates.drain(0 ..) {
+        for term in predicates.predicates.drain(0..) {
             clauses.push(self.try_term_to_tl(term, &mut preprocessor)?);
         }
 
@@ -1426,14 +1437,16 @@ impl<'a> LoadState<'a> {
                         ));
 
                     skeleton.clauses.extend(cg.skeleton.clauses.into_iter());
-                    skeleton.clause_clause_locs.extend_from_slice(
-                        &clause_clause_locs[0 ..]
-                    );
+                    skeleton
+                        .core
+                        .clause_clause_locs
+                        .extend_from_slice(&clause_clause_locs[0..]);
                 }
                 None => {
-                    cg.skeleton.clause_clause_locs.extend_from_slice(
-                        &clause_clause_locs[0 ..]
-                    );
+                    cg.skeleton
+                        .core
+                        .clause_clause_locs
+                        .extend_from_slice(&clause_clause_locs[0..]);
 
                     self.add_extensible_predicate(
                         key.clone(),
@@ -1442,23 +1455,6 @@ impl<'a> LoadState<'a> {
                     );
                 }
             };
-
-            if let Some(filename) = self.listing_src_file_name() {
-                if let CompilationTarget::User = &predicates.compilation_target {
-                    let compilation_target = mem::replace(
-                        &mut self.compilation_target,
-                        CompilationTarget::Module(filename),
-                    );
-
-                    self.extend_local_predicate_skeleton(
-                        &CompilationTarget::User,
-                        &key,
-                        clause_clause_locs.clone(),
-                    );
-
-                    self.compilation_target = compilation_target;
-                }
-            }
 
             self.extend_local_predicate_skeleton(
                 &predicates.compilation_target,
@@ -1498,30 +1494,28 @@ impl<'a> LoadState<'a> {
         key: &PredicateKey,
         clause_clause_locs: SliceDeque<usize>,
     ) {
-        match self
-            .wam
-            .indices
-            .get_local_predicate_skeleton_mut(
-                &self.compilation_target,
-                compilation_target.clone(),
-                key.clone(),
-            )
-        {
+        match self.wam.indices.get_local_predicate_skeleton_mut(
+            self.compilation_target.clone(),
+            compilation_target.clone(),
+            self.listing_src_file_name(),
+            key.clone(),
+        ) {
             Some(skeleton) => {
-                self.retraction_info
-                    .push_record(RetractionRecord::SkeletonLocalClauseTruncateBack(
+                self.retraction_info.push_record(
+                    RetractionRecord::SkeletonLocalClauseTruncateBack(
                         self.compilation_target.clone(),
                         compilation_target.clone(),
                         key.clone(),
                         skeleton.clause_clause_locs.len(),
-                    ));
-
-                skeleton.clause_clause_locs.extend_from_slice(
-                    &clause_clause_locs[0 ..]
+                    ),
                 );
+
+                skeleton
+                    .clause_clause_locs
+                    .extend_from_slice(&clause_clause_locs[0..]);
             }
             None => {
-                let mut skeleton = PredicateSkeleton::new();
+                let mut skeleton = LocalPredicateSkeleton::new();
                 skeleton.clause_clause_locs = clause_clause_locs;
 
                 self.add_local_extensible_predicate(
@@ -1539,15 +1533,12 @@ impl<'a> LoadState<'a> {
         key: &PredicateKey,
         code_len: usize,
     ) {
-        match self
-            .wam
-            .indices
-            .get_local_predicate_skeleton_mut(
-                &self.compilation_target,
-                compilation_target.clone(),
-                key.clone(),
-            )
-        {
+        match self.wam.indices.get_local_predicate_skeleton_mut(
+            self.compilation_target.clone(),
+            compilation_target.clone(),
+            self.listing_src_file_name(),
+            key.clone(),
+        ) {
             Some(skeleton) => {
                 self.retraction_info.push_record(
                     RetractionRecord::SkeletonLocalClauseClausePopFront(
@@ -1560,7 +1551,7 @@ impl<'a> LoadState<'a> {
                 skeleton.clause_clause_locs.push_front(code_len);
             }
             None => {
-                let mut skeleton = PredicateSkeleton::new();
+                let mut skeleton = LocalPredicateSkeleton::new();
                 skeleton.clause_clause_locs.push_front(code_len);
 
                 self.add_local_extensible_predicate(
@@ -1578,15 +1569,12 @@ impl<'a> LoadState<'a> {
         key: &PredicateKey,
         code_len: usize,
     ) {
-        match self
-            .wam
-            .indices
-            .get_local_predicate_skeleton_mut(
-                &self.compilation_target,
-                compilation_target.clone(),
-                key.clone(),
-            )
-        {
+        match self.wam.indices.get_local_predicate_skeleton_mut(
+            self.compilation_target.clone(),
+            compilation_target.clone(),
+            self.listing_src_file_name(),
+            key.clone(),
+        ) {
             Some(skeleton) => {
                 self.retraction_info.push_record(
                     RetractionRecord::SkeletonLocalClauseClausePopBack(
@@ -1599,7 +1587,7 @@ impl<'a> LoadState<'a> {
                 skeleton.clause_clause_locs.push_back(code_len);
             }
             None => {
-                let mut skeleton = PredicateSkeleton::new();
+                let mut skeleton = LocalPredicateSkeleton::new();
                 skeleton.clause_clause_locs.push_back(code_len);
 
                 self.add_local_extensible_predicate(
@@ -1624,21 +1612,19 @@ impl<'a> LoadState<'a> {
             .indices
             .get_predicate_skeleton_mut(&compilation_target, &key)
         {
-            Some(skeleton) if !skeleton.clauses.is_empty() => {
-                CodeGenSettings {
-                    global_clock_tick: if skeleton.is_dynamic {
-                        Some(self.wam.machine_st.global_clock)
-                    } else {
-                        None
-                    },
-                    is_extensible: true,
-                    non_counted_bt,
-                }
+            Some(skeleton) if !skeleton.clauses.is_empty() => CodeGenSettings {
+                global_clock_tick: if skeleton.core.is_dynamic {
+                    Some(self.wam.machine_st.global_clock)
+                } else {
+                    None
+                },
+                is_extensible: true,
+                non_counted_bt,
             },
             skeleton_opt => {
                 let settings = CodeGenSettings {
                     global_clock_tick: if let Some(skeleton) = skeleton_opt {
-                        if skeleton.is_dynamic {
+                        if skeleton.core.is_dynamic {
                             Some(self.wam.machine_st.global_clock)
                         } else {
                             None
@@ -1672,7 +1658,7 @@ impl<'a> LoadState<'a> {
             .get_predicate_skeleton_mut(&compilation_target, &key)
         {
             Some(skeleton) if !skeleton.clauses.is_empty() => skeleton,
-            _ => unreachable!()
+            _ => unreachable!(),
         };
 
         match append_or_prepend {
@@ -1680,7 +1666,7 @@ impl<'a> LoadState<'a> {
                 let clause_index_info = standalone_skeleton.clauses.pop_back().unwrap();
                 skeleton.clauses.push_back(clause_index_info);
 
-                skeleton.clause_clause_locs.push_back(code_len);
+                skeleton.core.clause_clause_locs.push_back(code_len);
 
                 self.retraction_info
                     .push_record(RetractionRecord::SkeletonClausePopBack(
@@ -1696,33 +1682,10 @@ impl<'a> LoadState<'a> {
                     self.wam.machine_st.global_clock,
                 );
 
-                self.push_back_to_local_predicate_skeleton(
-                    &compilation_target,
-                    &key,
-                    code_len,
-                );
+                self.push_back_to_local_predicate_skeleton(&compilation_target, &key, code_len);
 
-                if let Some(filename) = self.listing_src_file_name() {
-                    if let CompilationTarget::User = &compilation_target {
-                        let compilation_target = mem::replace(
-                            &mut self.compilation_target,
-                            CompilationTarget::Module(filename),
-                        );
-
-                        self.push_back_to_local_predicate_skeleton(
-                            &CompilationTarget::User,
-                            &key,
-                            code_len,
-                        );
-
-                        self.compilation_target = compilation_target;
-                    }
-                }
-
-                let code_index = self.get_or_insert_code_index(
-                    key.clone(),
-                    compilation_target.clone(),
-                );
+                let code_index =
+                    self.get_or_insert_code_index(key.clone(), compilation_target.clone());
 
                 if let Some(new_code_ptr) = result {
                     set_code_index(
@@ -1740,8 +1703,8 @@ impl<'a> LoadState<'a> {
                 let clause_index_info = standalone_skeleton.clauses.pop_back().unwrap();
                 skeleton.clauses.push_front(clause_index_info);
 
-                skeleton.clause_clause_locs.push_front(code_len);
-                skeleton.clause_assert_margin += 1;
+                skeleton.core.clause_clause_locs.push_front(code_len);
+                skeleton.core.clause_assert_margin += 1;
 
                 self.retraction_info
                     .push_record(RetractionRecord::SkeletonClausePopFront(
@@ -1759,33 +1722,10 @@ impl<'a> LoadState<'a> {
                     self.wam.machine_st.global_clock,
                 );
 
-                if let Some(filename) = self.listing_src_file_name() {
-                    if let CompilationTarget::User = &compilation_target {
-                        let compilation_target = mem::replace(
-                            &mut self.compilation_target,
-                            CompilationTarget::Module(filename),
-                        );
+                self.push_front_to_local_predicate_skeleton(&compilation_target, &key, code_len);
 
-                        self.push_front_to_local_predicate_skeleton(
-                            &CompilationTarget::User,
-                            &key,
-                            code_len,
-                        );
-
-                        self.compilation_target = compilation_target;
-                    }
-                }
-
-                self.push_front_to_local_predicate_skeleton(
-                    &compilation_target,
-                    &key,
-                    code_len,
-                );
-
-                let code_index = self.get_or_insert_code_index(
-                    key.clone(),
-                    compilation_target.clone(),
-                );
+                let code_index =
+                    self.get_or_insert_code_index(key.clone(), compilation_target.clone());
 
                 set_code_index(
                     &mut self.retraction_info,
@@ -1816,24 +1756,20 @@ impl<'a> LoadState<'a> {
             .opt_arg_index_key
             .switch_on_term_loc()
         {
-            Some(index_loc) => {
-                find_inner_choice_instr(
-                    &self.wam.code_repo.code,
-                    skeleton.clauses[target_pos].clause_start,
-                    index_loc,
-                )
-            }
-            None => {
-                skeleton.clauses[target_pos].clause_start
-            }
+            Some(index_loc) => find_inner_choice_instr(
+                &self.wam.code_repo.code,
+                skeleton.clauses[target_pos].clause_start,
+                index_loc,
+            ),
+            None => skeleton.clauses[target_pos].clause_start,
         };
 
         match &mut self.wam.code_repo.code[clause_loc] {
-            Line::Choice(ChoiceInstruction::DynamicElse(_, ref mut d, _)) |
-            Line::Choice(ChoiceInstruction::DynamicInternalElse(_, ref mut d, _)) => {
+            Line::Choice(ChoiceInstruction::DynamicElse(_, ref mut d, _))
+            | Line::Choice(ChoiceInstruction::DynamicInternalElse(_, ref mut d, _)) => {
                 *d = Death::Finite(self.wam.machine_st.global_clock);
             }
-            _ => unreachable!()
+            _ => unreachable!(),
         }
 
         delete_from_skeleton(
@@ -1846,10 +1782,8 @@ impl<'a> LoadState<'a> {
     }
 
     pub(super) fn retract_clause(&mut self, key: PredicateKey, target_pos: usize) -> usize {
-        let code_index = self.get_or_insert_code_index(
-            key.clone(),
-            self.compilation_target.clone(),
-        );
+        let code_index =
+            self.get_or_insert_code_index(key.clone(), self.compilation_target.clone());
 
         let skeleton = match self
             .wam
@@ -1924,11 +1858,19 @@ impl<'a> LoadState<'a> {
                             skeleton.clauses[target_pos + 1].clause_start =
                                 skeleton.clauses[target_pos].clause_start;
 
-                            return delete_from_skeleton(
-                                self.compilation_target.clone(),
+                            let index_ptr_opt = if target_pos == 0 {
+                                Some(IndexPtr::Index(clause_loc))
+                            } else {
+                                None
+                            };
+
+                            return finalize_retract(
                                 key,
+                                self.compilation_target.clone(),
                                 skeleton,
+                                code_index,
                                 target_pos,
+                                index_ptr_opt,
                                 &mut self.retraction_info,
                             );
                         }
@@ -2179,18 +2121,16 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
             .get_predicate_skeleton_mut(&compilation_target, &key)
         {
             Some(skeleton) if append_or_prepend.is_append() => {
-                let tail_num = skeleton.clause_clause_locs.len() - num_clause_predicates;
-                skeleton.clause_clause_locs[tail_num ..]
+                let tail_num = skeleton.core.clause_clause_locs.len() - num_clause_predicates;
+                skeleton.core.clause_clause_locs[tail_num..]
                     .iter()
                     .cloned()
                     .collect()
             }
-            Some(skeleton) => {
-                skeleton.clause_clause_locs[0 .. num_clause_predicates]
-                    .iter()
-                    .cloned()
-                    .collect()
-            }
+            Some(skeleton) => skeleton.core.clause_clause_locs[0..num_clause_predicates]
+                .iter()
+                .cloned()
+                .collect(),
             None => {
                 unreachable!()
             }
@@ -2201,21 +2141,21 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
             &(clause_name!("$clause"), 2),
         ) {
             Some(skeleton) if append_or_prepend.is_append() => {
-                for _ in 0 .. num_clause_predicates {
-                    skeleton.clause_clause_locs.pop_back();
+                for _ in 0..num_clause_predicates {
+                    skeleton.core.clause_clause_locs.pop_back();
                 }
 
                 for loc in locs_vec {
-                    skeleton.clause_clause_locs.push_back(loc);
+                    skeleton.core.clause_clause_locs.push_back(loc);
                 }
             }
             Some(skeleton) => {
-                for _ in 0 .. num_clause_predicates {
-                    skeleton.clause_clause_locs.pop_front();
+                for _ in 0..num_clause_predicates {
+                    skeleton.core.clause_clause_locs.pop_front();
                 }
 
                 for loc in locs_vec.into_iter().rev() {
-                    skeleton.clause_clause_locs.push_front(loc);
+                    skeleton.core.clause_clause_locs.push_front(loc);
                 }
             }
             None => {
@@ -2249,8 +2189,9 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
             .wam
             .indices
             .get_local_predicate_skeleton(
-                &self.load_state.compilation_target,
+                self.load_state.compilation_target.clone(),
                 self.predicates.compilation_target.clone(),
+                self.load_state.listing_src_file_name(),
                 key.clone(),
             )
             .map(|skeleton| skeleton.predicate_info())
@@ -2271,7 +2212,7 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
         let non_counted_bt = self.non_counted_bt_preds.contains(&key);
 
         if do_incremental_compile {
-            for term in self.predicates.predicates.drain(0 ..) {
+            for term in self.predicates.predicates.drain(0..) {
                 self.load_state.incremental_compile_clause(
                     key.clone(),
                     term,
@@ -2284,18 +2225,18 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
             if self.load_state.compilation_target != self.predicates.compilation_target {
                 if !local_predicate_info.is_extensible {
                     if predicate_info.is_multifile {
-                        println!("Warning: overwriting multifile predicate {}:{}/{} because \
+                        println!(
+                            "Warning: overwriting multifile predicate {}:{}/{} because \
                                   it was not locally declared multifile.",
-                                 self.predicates.compilation_target, key.0, key.1);
+                            self.predicates.compilation_target, key.0, key.1
+                        );
                     }
 
-                    if let Some(skeleton) = self.load_state
+                    if let Some(skeleton) = self
+                        .load_state
                         .wam
                         .indices
-                        .remove_predicate_skeleton(
-                            &self.predicates.compilation_target,
-                            &key,
-                        )
+                        .remove_predicate_skeleton(&self.predicates.compilation_target, &key)
                     {
                         if predicate_info.is_dynamic {
                             let clause_clause_compilation_target =
@@ -2303,15 +2244,13 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
                                     CompilationTarget::User => {
                                         CompilationTarget::Module(clause_name!("builtins"))
                                     }
-                                    module => {
-                                        module.clone()
-                                    }
+                                    module => module.clone(),
                                 };
 
                             self.load_state.retract_local_clauses_by_locs(
                                 clause_clause_compilation_target,
                                 (clause_name!("$clause"), 2),
-                                (0 .. skeleton.clauses.len()).map(Some).collect(),
+                                (0..skeleton.clauses.len()).map(Some).collect(),
                                 false, // the builtin M:'$clause'/2 is never dynamic.
                             );
 
@@ -2339,28 +2278,25 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
                 non_counted_bt,
             };
 
-            let code_index
-                = self.load_state.compile(key.clone(), &mut self.predicates, settings)?;
+            let code_index =
+                self.load_state
+                    .compile(key.clone(), &mut self.predicates, settings)?;
 
             if let Some(filename) = self.load_state.listing_src_file_name() {
-                if let CompilationTarget::User = &self.predicates.compilation_target {
-                    match self.load_state.wam.indices.modules.get_mut(&filename) {
-                        Some(ref mut module) => {
-                            let index_ptr = code_index.get();
-                            let code_index = module.code_dir.entry(key.clone())
-                                .or_insert(code_index);
+                match self.load_state.wam.indices.modules.get_mut(&filename) {
+                    Some(ref mut module) => {
+                        let index_ptr = code_index.get();
+                        let code_index = module.code_dir.entry(key.clone()).or_insert(code_index);
 
-                            set_code_index(
-                                &mut self.load_state.retraction_info,
-                                &CompilationTarget::Module(filename),
-                                key.clone(),
-                                &code_index,
-                                index_ptr,
-                            );
-                        }
-                        None => {
-                        }
+                        set_code_index(
+                            &mut self.load_state.retraction_info,
+                            &CompilationTarget::Module(filename),
+                            key.clone(),
+                            &code_index,
+                            index_ptr,
+                        );
                     }
+                    None => {}
                 }
             }
         }
@@ -2368,9 +2304,7 @@ impl<'a, TS: TermStream> Loader<'a, TS> {
         if predicate_info.is_dynamic {
             self.load_state.wam.machine_st.global_clock += 1;
 
-            let clauses_vec: Vec<_> = self.clause_clauses
-                .drain(0 .. predicates_len)
-                .collect();
+            let clauses_vec: Vec<_> = self.clause_clauses.drain(0..predicates_len).collect();
 
             self.compile_clause_clauses(
                 key,

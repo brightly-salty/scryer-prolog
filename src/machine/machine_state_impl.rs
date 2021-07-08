@@ -222,7 +222,7 @@ impl MachineState {
         &mut self,
         a1: Addr,
         a2: Addr,
-        mut occurs_trigger: impl FnMut()
+        mut occurs_trigger: impl FnMut(),
     ) {
         let mut pdl = vec![a1, a2];
         let mut tabu_list: IndexSet<(Addr, Addr)> = IndexSet::new();
@@ -1241,7 +1241,8 @@ impl MachineState {
                         let h = self.heap.h();
 
                         self.heap.push(HeapCellValue::Addr(Addr::Str(h + 1)));
-                        self.heap.push(HeapCellValue::NamedStr(arity, ct.name(), ct.spec()));
+                        self.heap
+                            .push(HeapCellValue::NamedStr(arity, ct.name(), ct.spec()));
 
                         self.bind(addr.as_var().unwrap(), Addr::HeapCell(h));
 
@@ -1380,7 +1381,7 @@ impl MachineState {
                 _ => {}
             }
 
-            match &code[p-1] {
+            match &code[p - 1] {
                 &Line::Choice(ChoiceInstruction::DynamicInternalElse(birth, death, _)) => {
                     if birth < machine_st.cc && Death::Finite(machine_st.cc) <= death {
                         return true;
@@ -1411,9 +1412,7 @@ impl MachineState {
                         Addr::LoadStatePayload(_) | Addr::Stream(_) | Addr::TcpListener(_) => {
                             IndexingCodePtr::Fail
                         }
-                        Addr::HeapCell(_) | Addr::StackCell(..) | Addr::AttrVar(..) => {
-                            v
-                        }
+                        Addr::HeapCell(_) | Addr::StackCell(..) | Addr::AttrVar(..) => v,
                         Addr::PStrLocation(..) => l,
                         Addr::Char(_)
                         | Addr::Con(_)
@@ -3102,8 +3101,7 @@ impl MachineState {
                     ct,
                     &indices.code_dir,
                     &indices.op_dir,
-                    current_input_stream,
-                    current_output_stream,
+                    &indices.stream_aliases,
                 )
             ),
             &ClauseType::CallN => try_or_fail!(
@@ -3113,8 +3111,7 @@ impl MachineState {
                     arity,
                     &indices.code_dir,
                     &indices.op_dir,
-                    current_input_stream,
-                    current_output_stream,
+                    &indices.stream_aliases,
                 )
             ),
             &ClauseType::Inlined(ref ct) => {
@@ -3203,15 +3200,11 @@ impl MachineState {
 
         match code_repo.find_living_dynamic(p, self.cc) {
             Some((offset, oi, ii, is_next_clause)) => {
-                self.p = CodePtr::Local(LocalCodePtr::IndexingBuf(
-                    p.abs_loc(), oi, ii,
-                ));
+                self.p = CodePtr::Local(LocalCodePtr::IndexingBuf(p.abs_loc(), oi, ii));
 
                 match self.dynamic_mode {
                     FirstOrNext::First if !is_next_clause => {
-                        self.p = CodePtr::Local(LocalCodePtr::DirEntry(
-                            p.abs_loc() + offset,
-                        ));
+                        self.p = CodePtr::Local(LocalCodePtr::DirEntry(p.abs_loc() + offset));
                     }
                     FirstOrNext::First => {
                         // there's a leading DynamicElse that sets self.cc.
@@ -3234,9 +3227,8 @@ impl MachineState {
                                 self.num_of_args -= 1;
                             }
                             None => {
-                                self.p = CodePtr::Local(LocalCodePtr::DirEntry(
-                                    p.abs_loc() + offset,
-                                ));
+                                self.p =
+                                    CodePtr::Local(LocalCodePtr::DirEntry(p.abs_loc() + offset));
                             }
                         }
                     }
@@ -3261,43 +3253,28 @@ impl MachineState {
                                 Some(_) => {
                                     try_or_fail!(
                                         self,
-                                        call_policy.retry(
-                                            self,
-                                            offset,
-                                            global_variables,
-                                        )
+                                        call_policy.retry(self, offset, global_variables,)
                                     )
                                 }
                                 None => {
                                     try_or_fail!(
                                         self,
-                                        call_policy.trust(
-                                            self,
-                                            offset,
-                                            global_variables,
-                                        )
+                                        call_policy.trust(self, offset, global_variables,)
                                     )
                                 }
                             }
                         } else {
-                            try_or_fail!(
-                                self,
-                                call_policy.trust(
-                                    self,
-                                    offset,
-                                    global_variables,
-                                )
-                            )
+                            try_or_fail!(self, call_policy.trust(self, offset, global_variables,))
                         }
                     }
                 }
-
-                self.dynamic_mode = FirstOrNext::Next;
             }
             None => {
                 self.fail = true;
             }
-                }
+        }
+
+        self.dynamic_mode = FirstOrNext::Next;
     }
 
     pub(super) fn execute_indexed_choice_instr(
@@ -3415,20 +3392,14 @@ impl MachineState {
                                         None => {
                                             try_or_fail!(
                                                 self,
-                                                call_policy.trust_me(
-                                                    self,
-                                                    global_variables,
-                                                )
+                                                call_policy.trust_me(self, global_variables,)
                                             )
                                         }
                                     }
                                 } else {
                                     try_or_fail!(
                                         self,
-                                        call_policy.trust_me(
-                                            self,
-                                            global_variables,
-                                        )
+                                        call_policy.trust_me(self, global_variables,)
                                     )
                                 }
                             }
@@ -3500,20 +3471,14 @@ impl MachineState {
                                         None => {
                                             try_or_fail!(
                                                 self,
-                                                call_policy.trust_me(
-                                                    self,
-                                                    global_variables,
-                                                )
+                                                call_policy.trust_me(self, global_variables,)
                                             )
                                         }
                                     }
                                 } else {
                                     try_or_fail!(
                                         self,
-                                        call_policy.trust_me(
-                                            self,
-                                            global_variables,
-                                        )
+                                        call_policy.trust_me(self, global_variables,)
                                     )
                                 }
                             }

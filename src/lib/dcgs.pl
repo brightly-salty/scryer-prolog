@@ -1,7 +1,11 @@
 :- module(dcgs,
           [op(1105, xfy, '|'),
 		   phrase/2,
-		   phrase/3]).
+		   phrase/3,
+                   seq//1,
+                   seqq//1,
+                   ... //0
+           ]).
 
 :- use_module(library(error)).
 :- use_module(library(lists), [append/3]).
@@ -178,3 +182,14 @@ user:term_expansion(Term0, Term) :-
     nonvar(Term0),
     dcg_rule(Term0, (Head :- Body)),
     Term = (Head :- Body).
+
+% Describes a sequence
+seq([]) --> [].
+seq([E|Es]) --> [E], seq(Es).
+
+% Describes a sequence of sequences
+seqq([]) --> [].
+seqq([Es|Ess]) --> seq(Es), seqq(Ess).
+
+% Describes an arbitrary number of elements
+... --> [] | [_], ... .

@@ -90,7 +90,7 @@ unload_evacuable(Evacuable) :-
 run_initialization_goals :-
     prolog_load_context(module, Module),
     (  predicate_property(Module:'$initialization_goals'(_), dynamic) ->
-       findall(Goal, '$call'(builtins:retract(Module:'$initialization_goals'(Goal))), Goals),
+       findall(Module:Goal, '$call'(builtins:retract(Module:'$initialization_goals'(Goal))), Goals),
        abolish(Module:'$initialization_goals'/1),
        (  maplist(Module:call, Goals) ->
           true
@@ -365,7 +365,6 @@ compile_declaration(discontiguous(Name/Arity), Evacuable) :-
     '$add_discontiguous_predicate'(Module, Name, Arity, Evacuable).
 compile_declaration(initialization(Goal), Evacuable) :-
     prolog_load_context(module, Module),
-    '$add_dynamic_predicate'(Module, '$initialization_goals', 1, Evacuable),
     assertz(Module:'$initialization_goals'(Goal)).
 compile_declaration(set_prolog_flag(Flag, Value), _) :-
     set_prolog_flag(Flag, Value).
@@ -464,7 +463,9 @@ use_module(Module, Exports) :-
 %% directory. Otherwise, use the relative path of Path.
 
 load_context_path(Module, Path) :-
-    (  prolog_load_context(directory, CurrentDir) ->
+    (  sub_atom(Module, 0, 1, _, '/') ->
+       Path = Module
+    ;  prolog_load_context(directory, CurrentDir) ->
        % Rust's Path module never ends a directory path with '/', so
        % add one here.
        atom_concat(CurrentDir, '/', CurrentDirSlashed),
@@ -510,7 +511,8 @@ use_module(Module, Exports, Evacuable) :-
     ;  (  path_atom(Module, ModulePath) ->
           load_context_path(ModulePath, Path),
           open_file(Path, Stream),
-          file_load(Stream, Path, Subevacuable),
+          stream_property(Stream, file_name(PathFileName)),
+          file_load(Stream, PathFileName, Subevacuable),
           '$use_module'(Evacuable, Subevacuable, Exports)
        ;  type_error(atom, Library, load/1)
        )
@@ -584,10 +586,16 @@ strip_module(Goal, M, G) :-
 expand_subgoal(UnexpandedGoals, MS, Module, ExpandedGoals, HeadVars) :-
     (  var(UnexpandedGoals) ->
        UnexpandedGoals = ExpandedGoals
-    ;  goal_expansion(UnexpandedGoals, Module, UnexpandedGoals1),
-       (  Module \== user ->
-          goal_expansion(UnexpandedGoals1, user, Goals)
-       ;  Goals = UnexpandedGoals1
+    ;  (  MS == 0 ->
+          % only expand complete goals. call/N will take care of incomplete goals
+          % by calling goal expansion after it is supplied the remaining arguments.
+          (  goal_expansion(UnexpandedGoals, Module, UnexpandedGoals1),
+             (  Module \== user ->
+                goal_expansion(UnexpandedGoals1, user, Goals)
+             ;  Goals = UnexpandedGoals1
+             )
+          )
+       ;  Goals = UnexpandedGoals
        ),
        (  inner_meta_specs(MS, Goals, _, MetaSpecs) ->
           expand_module_names(Goals, MetaSpecs, Module, ExpandedGoals, HeadVars)
@@ -738,14 +746,6 @@ thread_goals(Goals0, Goals1, Hole, Functor) :-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
-call_clause(M:G1, G0) :-
-    functor(G1, F, _),
-    atom(F),
-    atom(M),
-    F \== [],
-    !,
-    expand_goal(M:G1, M, G0).
-
 % The '$call' functor is an escape hatch from goal expansion. So far,
 % it is used only to avoid infinite recursion into expand_goal/3.
 
@@ -768,11 +768,15 @@ call_clause('$call'(G), G0) :-
     ).
 
 call_clause(G, G0) :-
-    functor(G, F, _),
+    strip_module(G, M, G1),
+    functor(G1, F, _),
     atom(F),
     F \== [],
-    load_context(M),
-    expand_goal(M:G, M, G0).
+    (  var(M) ->
+       load_context(M)
+    ;  true
+    ),
+    expand_goal(M:G1, M, G0).
 
 
 call(G) :-
@@ -783,16 +787,6 @@ call(G) :-
     ;  type_error(callable, G, call/1)
     ).
 
-
-call_clause(M:G1, Args, _, G0) :-
-    atom(M),
-    G1 =.. [F | As],
-    atom(F),
-    F \== [],
-    !,
-    append(As, Args, As1),
-    G2 =.. [F | As1],
-    expand_goal(M:G2, M, G0).
 
 call_clause('$call'(G1), Args, N, G0) :-
     (  var(G1),
@@ -817,10 +811,14 @@ call_clause('$call'(G1), Args, N, G0) :-
     ).
 
 call_clause(G, Args, _, G0) :-
-    G =.. [F | As],
+    strip_module(G, M, G1),
+    G1 =.. [F | As],
     atom(F),
     F \== [],
-    load_context(M),
+    (  var(M) ->
+       load_context(M)
+    ;  true
+    ),
     append(As, Args, As1),
     G2 =.. [F | As1],
     expand_goal(M:G2, M, G0).

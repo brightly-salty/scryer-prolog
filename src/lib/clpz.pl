@@ -3,7 +3,7 @@
     Author:        Markus Triska
     E-mail:        triska@metalevel.at
     WWW:           https://www.metalevel.at
-    Copyright (C): 2016-2020 Markus Triska
+    Copyright (C): 2016-2021 Markus Triska
 
     This library provides CLP(ℤ):
 
@@ -122,6 +122,7 @@
 :- use_module(library(error), [domain_error/3, type_error/3]).
 :- use_module(library(si)).
 :- use_module(library(freeze)).
+:- use_module(library(arithmetic)).
 
 % :- use_module(library(types)).
 
@@ -1902,12 +1903,6 @@ label([], _, Selection, Order, Choice, Optim0, Consistency, Vars) :-
                          retractall(extremum(_)))
         ).
 
-retractall(What) :-
-        (   \+ \+ retract(What) ->
-            retractall(What)
-        ;   true
-        ).
-
 % Introduce new variables for each min/max expression to avoid
 % reparsing expressions during optimisation.
 
@@ -2573,7 +2568,7 @@ parse_clpz(E, R,
              m(\A)             => [p(pfunction(\, A, R))],
              m(msb(A))         => [p(pfunction(msb, A, R))],
              m(lsb(A))         => [p(pfunction(lsb, A, R))],
-             m(popcount(A))    => [p(pfunction(popcount, A, R))],
+             m(popcount(A))    => [p(ppopcount(A, R))],
              m(A<<B)           => [p(pfunction(<<, A, B, R))],
              m(A>>B)           => [p(pfunction(>>, A, B, R))],
              m(A/\B)           => [p(pfunction(/\, A, B, R))],
@@ -2960,7 +2955,15 @@ expr_conds(A0\/B0, A\/B) --> expr_conds(A0, A), expr_conds(B0, B).
 expr_conds(xor(A0,B0), xor(A,B)) --> expr_conds(A0, A), expr_conds(B0, B).
 expr_conds(lsb(A0), lsb(A)) --> expr_conds(A0, A).
 expr_conds(msb(A0), msb(A)) --> expr_conds(A0, A).
-expr_conds(popcount(A0), popcount(A)) --> expr_conds(A0, A).
+expr_conds(popcount(A0), Count) -->
+        expr_conds(A0, A),
+        [I is A, arithmetic:popcount(I, Count)].
+
+no_popcount_t(Gs, T) :-
+        (   member(arithmetic:popcount(_, _), Gs) ->
+            T = false
+        ;   T = true
+        ).
 
 clpz_expandable(_ in _).
 clpz_expandable(_ #= _).
@@ -2969,29 +2972,48 @@ clpz_expandable(_ #=< _).
 clpz_expandable(_ #> _).
 clpz_expandable(_ #< _).
 clpz_expandable(_ #\= _).
+clpz_expandable(_ #<==> _).
 
 clpz_expansion(Var in Dom, In) :-
         (   ground(Dom), Dom = L..U, integer(L), integer(U) ->
             expansion_simpler(
                 (   integer(Var) ->
-                    between(L, U, Var)
+                    between:between(L, U, Var)
                 ;   clpz:clpz_in(Var, Dom)
                 ), In)
         ;   In = clpz:clpz_in(Var, Dom)
         ).
+clpz_expansion(A #<==> B, Reif) :-
+        nonvar(A),
+        A =.. [F0,X0,Y0],
+        clpz_builtin(F0, F),
+        phrase(expr_conds(X0, X), Cs0, Cs),
+        phrase(expr_conds(Y0, Y), Cs),
+        list_goal(Cs0, Cond),
+        Expr =.. [F,X,Y],
+        expansion_simpler(( Cond, ( var(B) ; integer(B), clpz:between(0, 1, B) ) ->
+                            (   Expr ->
+                                B = 1
+                            ;   B = 0
+                            )
+                          ; clpz:reify(A, RA),
+                            clpz:reify(B, RA)
+                          ), Reif).
 clpz_expansion(X0 #= Y0, Equal) :-
         phrase(expr_conds(X0, X), CsX),
         phrase(expr_conds(Y0, Y), CsY),
         list_goal(CsX, CondX),
         list_goal(CsY, CondY),
+        no_popcount_t(CsY, YT),
+        no_popcount_t(CsX, XT),
         expansion_simpler(
                 (   CondX ->
-                    (   var(Y) -> Y is X
+                    (   YT, var(Y) -> Y is X
                     ;   CondY -> X =:= Y
                     ;   T is X, clpz:clpz_equal(T, Y0)
                     )
                 ;   CondY ->
-                    (   var(X) -> X is Y
+                    (   XT, var(X) -> X is Y
                     ;   T is Y, clpz:clpz_equal(X0, T)
                     )
                 ;   clpz:clpz_equal(X0, Y0)
@@ -3027,6 +3049,13 @@ clpz_expansion(X0 #\= Y0, Neq) :-
               ), Neq).
 
 
+clpz_builtin(#=, =:=).
+clpz_builtin(#\=, =\=).
+clpz_builtin(#>, >).
+clpz_builtin(#<, <).
+clpz_builtin(#>=, >=).
+clpz_builtin(#=<, =<).
+
 expansion_simpler((True->Then0;_), Then) :-
         is_true(True), !,
         expansion_simpler(Then0, Then).
@@ -3051,7 +3080,9 @@ expansion_simpler(Var =:= Expr0, Goal) :-
         (   maplist(call, Gs) -> Value is Expr, Goal = (Var =:= Value)
         ;   Goal = false
         ).
-expansion_simpler(between(L,U,V), Goal) :- maplist(integer, [L,U,V]), !,
+expansion_simpler(between:between(L,U,V), Goal) :-
+        maplist(integer, [L,U,V]),
+        !,
         (   between(L,U,V) -> Goal = true
         ;   Goal = false
         ).
@@ -4287,13 +4318,13 @@ tuples_in(Tuples, Relation) :-
         must_be(list(list), Tuples),
         maplist(maplist(fd_variable), Tuples),
         must_be(list(list(integer)), Relation),
-        maplist(relation_tuple(Relation), Tuples),
-        do_queue.
+        maplist(relation_tuple(Relation), Tuples).
 
 relation_tuple(Relation, Tuple) :-
         relation_unifiable(Relation, Tuple, Us, _, _),
         (   ground(Tuple) -> memberchk(Tuple, Relation)
-        ;   phrase(tuple_domain(Tuple, Us), _),
+        ;   new_queue(Q),
+            phrase((tuple_domain(Tuple, Us),do_queue), [Q], _),
             (   Tuple = [_,_|_] -> tuple_freeze(Tuple, Us)
             ;   true
             )
@@ -5452,6 +5483,18 @@ run_propagator(pexp(X,Y,Z), MState) -->
             fd_put(Z, ZD1, ZPs)
         ;   true
         ).
+
+%% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% % Y = popcount(X)
+
+run_propagator(ppopcount(X,Y), MState) -->
+        (   nonvar(X) ->
+            kill(MState),
+            queue_goal(popcount(X, Y))
+        ;   true
+        ).
+
+
 %% %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% % Z = X xor Y
 
@@ -7659,6 +7702,7 @@ attribute_goal_(prem(X,Y,Z))           --> [?(X) rem ?(Y) #= ?(Z)].
 attribute_goal_(pmax(X,Y,Z))           --> [?(Z) #= max(?(X),?(Y))].
 attribute_goal_(pmin(X,Y,Z))           --> [?(Z) #= min(?(X),?(Y))].
 attribute_goal_(pxor(X,Y,Z))           --> [?(Z) #= xor(?(X), ?(Y))].
+attribute_goal_(ppopcount(X,Y))        --> [?(Y) #= popcount(?(X))].
 attribute_goal_(scalar_product_neq(Cs,Vs,C)) -->
         [Left #\= Right],
         { scalar_product_left_right([-1|Cs], [C|Vs], Left, Right) }.

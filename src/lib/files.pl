@@ -51,7 +51,10 @@
                   file_exists/1,
                   directory_exists/1,
                   delete_file/1,
+				  rename_file/2,
+				  delete_directory/1,
                   make_directory/1,
+                  make_directory_path/1,
                   working_directory/2,
                   path_canonical/2,
                   path_segments/2,
@@ -90,14 +93,34 @@ make_directory(Directory) :-
         list_of_chars(Directory),
         '$make_directory'(Directory).
 
+make_directory_path(Directory) :-
+        list_of_chars(Directory),
+        '$make_directory_path'(Directory).
+
 delete_file(File) :-
         file_must_exist(File, delete_file/1),
         list_of_chars(File),
         '$delete_file'(File).
 
+rename_file(File, Renamed) :-
+        file_must_exist(File, rename_file/2),
+        list_of_chars(File),
+		list_of_chars(Renamed),
+        '$rename_file'(File, Renamed).
+
+delete_directory(Directory) :-
+        directory_must_exist(Directory, delete_directory/1),
+        list_of_chars(Directory),
+        '$delete_directory'(Directory).
+
 file_must_exist(File, Context) :-
         (   file_exists(File) -> true
         ;   throw(error(existence_error(file, File), Context))
+        ).
+
+directory_must_exist(Directory, Context) :-
+        (   directory_exists(Directory) -> true
+        ;   throw(error(existence_error(directory, Directory), Context))
         ).
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

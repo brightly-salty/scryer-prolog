@@ -123,9 +123,8 @@ ref_thread_local! {
         m.insert(("ground", 1), ClauseType::BuiltIn(BuiltInClauseType::Ground));
         m.insert(("is", 2), ClauseType::BuiltIn(BuiltInClauseType::Is(r1, ar_reg!(r2))));
         m.insert(("keysort", 2), ClauseType::BuiltIn(BuiltInClauseType::KeySort));
-        m.insert(("nl", 0), ClauseType::BuiltIn(BuiltInClauseType::Nl));
         m.insert(("\\==", 2), ClauseType::BuiltIn(BuiltInClauseType::NotEq));
-        m.insert(("read", 1), ClauseType::BuiltIn(BuiltInClauseType::Read));
+        m.insert(("read", 2), ClauseType::BuiltIn(BuiltInClauseType::Read));
         m.insert(("sort", 2), ClauseType::BuiltIn(BuiltInClauseType::Sort));
 
         m
@@ -174,7 +173,10 @@ pub(crate) enum SystemClauseType {
     DirectoryExists,
     DirectorySeparator,
     MakeDirectory,
+    MakeDirectoryPath,
     DeleteFile,
+	RenameFile,
+    DeleteDirectory,
     WorkingDirectory,
     PathCanonical,
     FileTime,
@@ -299,6 +301,7 @@ pub(crate) enum SystemClauseType {
     GetEnv,
     SetEnv,
     UnsetEnv,
+    PID,
     CharsBase64,
     DevourWhitespace,
     IsSTOEnabled,
@@ -307,6 +310,7 @@ pub(crate) enum SystemClauseType {
     SetSTOWithErrorAsUnify,
     HomeDirectory,
     DebugHook,
+    PopCount
 }
 
 impl SystemClauseType {
@@ -335,7 +339,10 @@ impl SystemClauseType {
             &SystemClauseType::DirectoryExists => clause_name!("$directory_exists"),
             &SystemClauseType::DirectorySeparator => clause_name!("$directory_separator"),
             &SystemClauseType::MakeDirectory => clause_name!("$make_directory"),
+            &SystemClauseType::MakeDirectoryPath => clause_name!("$make_directory_path"),
             &SystemClauseType::DeleteFile => clause_name!("$delete_file"),
+            &SystemClauseType::RenameFile => clause_name!("$rename_file"),
+            &SystemClauseType::DeleteDirectory => clause_name!("$delete_directory"),
             &SystemClauseType::WorkingDirectory => clause_name!("$working_directory"),
             &SystemClauseType::PathCanonical => clause_name!("$path_canonical"),
             &SystemClauseType::FileTime => clause_name!("$file_time"),
@@ -585,6 +592,7 @@ impl SystemClauseType {
             &SystemClauseType::GetEnv => clause_name!("$getenv"),
             &SystemClauseType::SetEnv => clause_name!("$setenv"),
             &SystemClauseType::UnsetEnv => clause_name!("$unsetenv"),
+            &SystemClauseType::PID => clause_name!("$pid"),
             &SystemClauseType::CharsBase64 => clause_name!("$chars_base64"),
             &SystemClauseType::LoadLibraryAsStream => clause_name!("$load_library_as_stream"),
             &SystemClauseType::DevourWhitespace => clause_name!("$devour_whitespace"),
@@ -592,8 +600,11 @@ impl SystemClauseType {
             &SystemClauseType::SetSTOAsUnify => clause_name!("$set_sto_as_unify"),
             &SystemClauseType::SetNSTOAsUnify => clause_name!("$set_nsto_as_unify"),
             &SystemClauseType::HomeDirectory => clause_name!("$home_directory"),
-            &SystemClauseType::SetSTOWithErrorAsUnify => clause_name!("$set_sto_with_error_as_unify"),
+            &SystemClauseType::SetSTOWithErrorAsUnify => {
+                clause_name!("$set_sto_with_error_as_unify")
+            }
             &SystemClauseType::DebugHook => clause_name!("$debug_hook"),
+            &SystemClauseType::PopCount => clause_name!("$popcount"),
         }
     }
 
@@ -742,7 +753,10 @@ impl SystemClauseType {
             ("$directory_exists", 1) => Some(SystemClauseType::DirectoryExists),
             ("$directory_separator", 1) => Some(SystemClauseType::DirectorySeparator),
             ("$make_directory", 1) => Some(SystemClauseType::MakeDirectory),
+            ("$make_directory_path", 1) => Some(SystemClauseType::MakeDirectoryPath),
             ("$delete_file", 1) => Some(SystemClauseType::DeleteFile),
+            ("$rename_file", 2) => Some(SystemClauseType::RenameFile),
+            ("$delete_directory", 1) => Some(SystemClauseType::DeleteDirectory),
             ("$working_directory", 2) => Some(SystemClauseType::WorkingDirectory),
             ("$path_canonical", 2) => Some(SystemClauseType::PathCanonical),
             ("$file_time", 3) => Some(SystemClauseType::FileTime),
@@ -799,6 +813,7 @@ impl SystemClauseType {
             ("$getenv", 2) => Some(SystemClauseType::GetEnv),
             ("$setenv", 2) => Some(SystemClauseType::SetEnv),
             ("$unsetenv", 1) => Some(SystemClauseType::UnsetEnv),
+            ("$pid", 1) => Some(SystemClauseType::PID),
             ("$chars_base64", 4) => Some(SystemClauseType::CharsBase64),
             ("$load_library_as_stream", 3) => Some(SystemClauseType::LoadLibraryAsStream),
             ("$push_load_context", 2) => Some(SystemClauseType::REPL(REPLCodePtr::PushLoadContext)),
@@ -834,15 +849,14 @@ impl SystemClauseType {
             ("$cpp_discontiguous_property", 3) => {
                 Some(SystemClauseType::REPL(REPLCodePtr::DiscontiguousProperty))
             }
-            ("$devour_whitespace", 1) => {
-                Some(SystemClauseType::DevourWhitespace)
-            }
+            ("$devour_whitespace", 1) => Some(SystemClauseType::DevourWhitespace),
             ("$is_sto_enabled", 1) => Some(SystemClauseType::IsSTOEnabled),
             ("$set_sto_as_unify", 0) => Some(SystemClauseType::SetSTOAsUnify),
             ("$set_nsto_as_unify", 0) => Some(SystemClauseType::SetNSTOAsUnify),
             ("$set_sto_with_error_as_unify", 0) => Some(SystemClauseType::SetSTOWithErrorAsUnify),
             ("$home_directory", 1) => Some(SystemClauseType::HomeDirectory),
             ("$debug_hook", 0) => Some(SystemClauseType::DebugHook),
+            ("$popcount", 2) => Some(SystemClauseType::PopCount),
             _ => None,
         }
     }
@@ -860,7 +874,6 @@ pub(crate) enum BuiltInClauseType {
     Ground,
     Is(RegType, ArithmeticTerm),
     KeySort,
-    Nl,
     NotEq,
     Read,
     Sort,
@@ -889,7 +902,6 @@ impl BuiltInClauseType {
             &BuiltInClauseType::Ground => clause_name!("ground"),
             &BuiltInClauseType::Is(..) => clause_name!("is"),
             &BuiltInClauseType::KeySort => clause_name!("keysort"),
-            &BuiltInClauseType::Nl => clause_name!("nl"),
             &BuiltInClauseType::NotEq => clause_name!("\\=="),
             &BuiltInClauseType::Read => clause_name!("read"),
             &BuiltInClauseType::Sort => clause_name!("sort"),
@@ -909,8 +921,7 @@ impl BuiltInClauseType {
             &BuiltInClauseType::Is(..) => 2,
             &BuiltInClauseType::KeySort => 2,
             &BuiltInClauseType::NotEq => 2,
-            &BuiltInClauseType::Nl => 0,
-            &BuiltInClauseType::Read => 1,
+            &BuiltInClauseType::Read => 2,
             &BuiltInClauseType::Sort => 2,
         }
     }

@@ -3,7 +3,7 @@ use prolog_parser::parser::*;
 use prolog_parser::{
     alpha_char, alpha_numeric_char, binary_digit_char, clause_name, decimal_digit_char,
     exponent_char, graphic_char, graphic_token_char, hexadecimal_digit_char, layout_char,
-    meta_char, new_line_char, octal_digit_char, prolog_char, sign_char, solo_char,
+    meta_char, new_line_char, octal_digit_char, octet_char, prolog_char, sign_char, solo_char,
     symbolic_control_char, symbolic_hexadecimal_char, temp_v,
 };
 
@@ -41,6 +41,7 @@ use std::net::{TcpListener, TcpStream};
 use std::num::NonZeroU32;
 use std::ops::Sub;
 use std::rc::Rc;
+use std::process;
 
 use chrono::{offset::Local, DateTime};
 use cpu_time::ProcessTime;
@@ -878,10 +879,44 @@ impl MachineState {
                     }
                 }
             }
+            &SystemClauseType::MakeDirectoryPath => {
+                let directory = self.heap_pstr_iter(self[temp_v!(1)]).to_string();
+
+                match fs::create_dir_all(directory) {
+                    Ok(_) => {}
+                    _ => {
+                        self.fail = true;
+                        return Ok(());
+                    }
+                }
+            }
             &SystemClauseType::DeleteFile => {
                 let file = self.heap_pstr_iter(self[temp_v!(1)]).to_string();
 
                 match fs::remove_file(file) {
+                    Ok(_) => {}
+                    _ => {
+                        self.fail = true;
+                        return Ok(());
+                    }
+                }
+            }
+            &SystemClauseType::RenameFile => {
+                let file = self.heap_pstr_iter(self[temp_v!(1)]).to_string();
+                let renamed = self.heap_pstr_iter(self[temp_v!(2)]).to_string();
+
+                match fs::rename(file, renamed) {
+                    Ok(_) => {}
+                    _ => {
+                        self.fail = true;
+                        return Ok(());
+                    }
+                }
+            }
+            &SystemClauseType::DeleteDirectory => {
+                let directory = self.heap_pstr_iter(self[temp_v!(1)]).to_string();
+
+                match fs::remove_dir(directory) {
                     Ok(_) => {}
                     _ => {
                         self.fail = true;
@@ -1292,8 +1327,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::PeekByte => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "peek_byte", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "peek_byte",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -1390,8 +1429,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::PeekChar => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "peek_char", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "peek_char",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -1493,8 +1536,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::PeekCode => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "peek_code", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "peek_code",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -1775,46 +1822,47 @@ impl MachineState {
                         }
                     };
                 }
-                macro_check!(symbolic_control_char, "symbolic_control");
-                // macro_check!(space_char, "space");
-                macro_check!(layout_char, "layout");
-                macro_check!(symbolic_hexadecimal_char, "symbolic_hexadecimal");
-                macro_check!(octal_digit_char, "octal_digit");
-                macro_check!(binary_digit_char, "binary_digit");
-                macro_check!(hexadecimal_digit_char, "hexadecimal_digit");
-                macro_check!(exponent_char, "exponent");
-                macro_check!(sign_char, "sign");
-                // macro_check!(new_line_char, "new_line");
-                // macro_check!(comment_1_char, "comment_1");
-                // macro_check!(comment_2_char, "comment_2");
-                // macro_check!(capital_letter_char, "upper");
-                // macro_check!(small_letter_char, "lower");
-                // macro_check!(variable_indicator_char, "variable_indicator");
-                macro_check!(graphic_char, "graphic");
-                macro_check!(graphic_token_char, "graphic_token");
                 macro_check!(alpha_char, "alpha");
-                macro_check!(decimal_digit_char, "decimal_digit");
-                // macro_check!(decimal_point_char, "decimal_point");
-                macro_check!(alpha_numeric_char, "alnum");
-                // macro_check!(cut_char, "cut");
-                // macro_check!(semicolon_char, "semicolon");
-                // macro_check!(backslash_char, "backslash");
-                // macro_check!(single_quote_char, "single_quote");
-                // macro_check!(double_quote_char, "double_quote");
-                // macro_check!(back_quote_char, "back_quote");
-                macro_check!(meta_char, "meta");
-                macro_check!(solo_char, "solo");
-                macro_check!(prolog_char, "prolog");
                 method_check!(is_alphabetic, "alphabetic");
-                method_check!(is_lowercase, "lower");
-                method_check!(is_uppercase, "upper");
-                method_check!(is_whitespace, "whitespace");
                 method_check!(is_alphanumeric, "alphanumeric");
-                method_check!(is_control, "control");
-                method_check!(is_numeric, "numeric");
+                macro_check!(alpha_numeric_char, "alnum");
                 method_check!(is_ascii, "ascii");
                 method_check!(is_ascii_punctuation, "ascii_ponctuaction");
                 method_check!(is_ascii_graphic, "ascii_graphic");
+                // macro_check!(backslash_char, "backslash");
+                // macro_check!(back_quote_char, "back_quote");
+                macro_check!(binary_digit_char, "binary_digit");
+                // macro_check!(capital_letter_char, "upper");
+                // macro_check!(comment_1_char, "comment_1");
+                // macro_check!(comment_2_char, "comment_2");
+                method_check!(is_control, "control");
+                // macro_check!(cut_char, "cut");
+                macro_check!(decimal_digit_char, "decimal_digit");
+                // macro_check!(decimal_point_char, "decimal_point");
+                // macro_check!(double_quote_char, "double_quote");
+                macro_check!(exponent_char, "exponent");
+                macro_check!(graphic_char, "graphic");
+                macro_check!(graphic_token_char, "graphic_token");
+                macro_check!(hexadecimal_digit_char, "hexadecimal_digit");
+                macro_check!(layout_char, "layout");
+                method_check!(is_lowercase, "lower");
+                macro_check!(meta_char, "meta");
+                // macro_check!(new_line_char, "new_line");
+                method_check!(is_numeric, "numeric");
+                macro_check!(octal_digit_char, "octal_digit");
+                macro_check!(octet_char, "octet");
+                macro_check!(prolog_char, "prolog");
+                // macro_check!(semicolon_char, "semicolon");
+                macro_check!(sign_char, "sign");
+                // macro_check!(single_quote_char, "single_quote");
+                // macro_check!(small_letter_char, "lower");
+                macro_check!(solo_char, "solo");
+                // macro_check!(space_char, "space");
+                macro_check!(symbolic_hexadecimal_char, "symbolic_hexadecimal");
+                macro_check!(symbolic_control_char, "symbolic_control");
+                method_check!(is_uppercase, "upper");
+                // macro_check!(variable_indicator_char, "variable_indicator");
+                method_check!(is_whitespace, "whitespace");
             }
             &SystemClauseType::CheckCutPoint => {
                 let addr = self.store(self.deref(self[temp_v!(1)]));
@@ -1851,32 +1899,34 @@ impl MachineState {
                 let addr = self[temp_v!(2)];
 
                 match indices.global_variables.get_mut(&key) {
-                    Some((ref ball, ref mut loc)) => {
-                        match loc {
-                            Some(ref value_addr) => {
-                                (self.unify_fn)(self, addr, *value_addr);
-                            }
-                            loc @ None if !ball.stub.is_empty() => {
-                                let h = self.heap.h();
-                                let stub = ball.copy_and_align(h);
-
-                                self.heap.extend(stub.into_iter());
-                                (self.unify_fn)(self, addr, Addr::HeapCell(h));
-
-                                if !self.fail {
-                                    *loc = Some(Addr::HeapCell(h));
-                                    self.trail(TrailRef::BlackboardEntry(key_h));
-                                }
-                            }
-                            _ => self.fail = true,
+                    Some((ref ball, ref mut loc)) => match loc {
+                        Some(ref value_addr) => {
+                            (self.unify_fn)(self, addr, *value_addr);
                         }
-                    }
+                        loc @ None if !ball.stub.is_empty() => {
+                            let h = self.heap.h();
+                            let stub = ball.copy_and_align(h);
+
+                            self.heap.extend(stub.into_iter());
+                            (self.unify_fn)(self, addr, Addr::HeapCell(h));
+
+                            if !self.fail {
+                                *loc = Some(Addr::HeapCell(h));
+                                self.trail(TrailRef::BlackboardEntry(key_h));
+                            }
+                        }
+                        _ => self.fail = true,
+                    },
                     None => self.fail = true,
                 };
             }
             &SystemClauseType::PutCode => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "put_code", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "put_code",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -1929,8 +1979,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::PutChar => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "put_char", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "put_char",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -1976,8 +2030,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::PutChars => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "$put_chars", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "$put_chars",
+                    2,
+                )?;
 
                 let mut bytes = Vec::new();
                 let string = self.heap_pstr_iter(self[temp_v!(2)]).to_string();
@@ -2024,8 +2082,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::PutByte => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "put_byte", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "put_byte",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -2113,8 +2175,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::GetByte => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "get_byte", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "get_byte",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -2196,8 +2262,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::GetChar => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "get_char", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "get_char",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -2299,8 +2369,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::GetNChars => {
-                let stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "get_n_chars", 3)?;
+                let stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "get_n_chars",
+                    3,
+                )?;
 
                 let num = match Number::try_from((self[temp_v!(2)], &self.heap)) {
                     Ok(Number::Fixnum(n)) => usize::try_from(n).unwrap(),
@@ -2345,8 +2419,12 @@ impl MachineState {
                 (self.unify_fn)(self, self[temp_v!(3)], string);
             }
             &SystemClauseType::GetCode => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "get_code", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "get_code",
+                    2,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -2523,8 +2601,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::FlushOutput => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "flush_output", 1)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "flush_output",
+                    1,
+                )?;
 
                 if !stream.is_output_stream() {
                     let stub = MachineError::functor_stub(clause_name!("flush_output"), 1);
@@ -2590,7 +2672,12 @@ impl MachineState {
                 };
             }
             &SystemClauseType::Close => {
-                let mut stream = self.get_stream_or_alias(self[temp_v!(1)], indices, "close", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "close",
+                    2,
+                )?;
 
                 if !stream.is_input_stream() {
                     stream.flush().unwrap(); // 8.11.6.1b)
@@ -2616,7 +2703,7 @@ impl MachineState {
                     indices.streams.insert(current_output_stream.clone());
                 }
 
-                if !stream.is_stdin() && !stream.is_stdout() {
+                if !stream.is_stdin() && !stream.is_stdout() && !stream.is_stderr() {
                     stream.close();
 
                     if let Some(ref alias) = stream.options().alias {
@@ -2738,8 +2825,7 @@ impl MachineState {
                                 (name, arity + narity),
                                 module_name,
                                 true,
-                                current_input_stream,
-                                current_output_stream,
+                                &indices.stream_aliases,
                             );
                         } else {
                             unreachable!()
@@ -2753,8 +2839,7 @@ impl MachineState {
                                 (name.clone(), narity),
                                 module_name,
                                 true,
-                                current_input_stream,
-                                current_output_stream,
+                                &indices.stream_aliases,
                             );
                         } else {
                             unreachable!()
@@ -2767,8 +2852,7 @@ impl MachineState {
                             (clause_name!(c.to_string(), self.atom_tbl), narity),
                             module_name,
                             true,
-                            current_input_stream,
-                            current_output_stream,
+                            &indices.stream_aliases,
                         );
                     }
                     addr => {
@@ -3471,17 +3555,22 @@ impl MachineState {
                 self.fail = match self.store(self.deref(self[temp_v!(2)])) {
                     Addr::Str(s) => match &self.heap[s] {
                         &HeapCellValue::NamedStr(arity, ref name, ref spec) => {
-                            if CLAUSE_TYPE_FORMS.borrow().get(&(name.as_str(), arity)).is_some() {
+                            if CLAUSE_TYPE_FORMS
+                                .borrow()
+                                .get(&(name.as_str(), arity))
+                                .is_some()
+                            {
                                 true
                             } else {
-                                let index = indices.get_predicate_code_index(
-                                    name.clone(),
-                                    arity,
-                                    module_name,
-                                    spec.clone(),
-                                )
-                                .map(|index| index.get())
-                                .unwrap_or(IndexPtr::DynamicUndefined);
+                                let index = indices
+                                    .get_predicate_code_index(
+                                        name.clone(),
+                                        arity,
+                                        module_name,
+                                        spec.clone(),
+                                    )
+                                    .map(|index| index.get())
+                                    .unwrap_or(IndexPtr::DynamicUndefined);
 
                                 match index {
                                     IndexPtr::DynamicUndefined => false,
@@ -3498,17 +3587,22 @@ impl MachineState {
                             let spec =
                                 fetch_atom_op_spec(name.clone(), spec.clone(), &indices.op_dir);
 
-                            if CLAUSE_TYPE_FORMS.borrow().get(&(name.as_str(), 0)).is_some() {
+                            if CLAUSE_TYPE_FORMS
+                                .borrow()
+                                .get(&(name.as_str(), 0))
+                                .is_some()
+                            {
                                 true
                             } else {
-                                let index = indices.get_predicate_code_index(
-                                    name.clone(),
-                                    0,
-                                    module_name,
-                                    spec.clone(),
-                                )
-                                .map(|index| index.get())
-                                .unwrap_or(IndexPtr::DynamicUndefined);
+                                let index = indices
+                                    .get_predicate_code_index(
+                                        name.clone(),
+                                        0,
+                                        module_name,
+                                        spec.clone(),
+                                    )
+                                    .map(|index| index.get())
+                                    .unwrap_or(IndexPtr::DynamicUndefined);
 
                                 match index {
                                     IndexPtr::DynamicUndefined => false,
@@ -3643,7 +3737,8 @@ impl MachineState {
             &SystemClauseType::SetCutPointByDefault(r) => deref_cut(self, r),
             &SystemClauseType::SetInput => {
                 let addr = self.store(self.deref(self[temp_v!(1)]));
-                let stream = self.get_stream_or_alias(addr, indices, "set_input", 1)?;
+                let stream =
+                    self.get_stream_or_alias(addr, &indices.stream_aliases, "set_input", 1)?;
 
                 if !stream.is_input_stream() {
                     let stub = MachineError::functor_stub(clause_name!("set_input"), 1);
@@ -3666,7 +3761,8 @@ impl MachineState {
             }
             &SystemClauseType::SetOutput => {
                 let addr = self.store(self.deref(self[temp_v!(1)]));
-                let stream = self.get_stream_or_alias(addr, indices, "set_output", 1)?;
+                let stream =
+                    self.get_stream_or_alias(addr, &indices.stream_aliases, "set_output", 1)?;
 
                 if !stream.is_output_stream() {
                     let stub = MachineError::functor_stub(clause_name!("set_input"), 1);
@@ -3916,7 +4012,12 @@ impl MachineState {
             &SystemClauseType::ReadTerm => {
                 readline::set_prompt(false);
 
-                let stream = self.get_stream_or_alias(self[temp_v!(1)], indices, "read_term", 3)?;
+                let stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "read_term",
+                    3,
+                )?;
 
                 self.read_term(stream, indices)?;
             }
@@ -4315,8 +4416,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::SetStreamPosition => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "set_stream_position", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "set_stream_position",
+                    2,
+                )?;
 
                 if !stream.options().reposition {
                     let stub = MachineError::functor_stub(clause_name!("set_stream_position"), 2);
@@ -4351,8 +4456,12 @@ impl MachineState {
                 stream.set_position(position);
             }
             &SystemClauseType::StreamProperty => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "stream_property", 2)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "stream_property",
+                    2,
+                )?;
 
                 let property = match self.store(self.deref(self[temp_v!(2)])) {
                     Addr::Con(h) if self.heap.atom_at(h) => match &self.heap[h] {
@@ -4481,22 +4590,22 @@ impl MachineState {
                 let new_value = self.store(self.deref(self[temp_v!(2)]));
 
                 match indices.global_variables.get_mut(&key) {
-                    Some((_, ref mut loc)) => {
-                        match loc {
-                            Some(ref mut value) => {
-                                let old_value_loc = self.heap.push(HeapCellValue::Addr(*value));
-                                self.trail(TrailRef::BlackboardOffset(key_h, old_value_loc));
-                                *value = new_value;
-                            }
-                            loc @ None => {
-                                self.trail(TrailRef::BlackboardEntry(key_h));
-                                *loc = Some(new_value);
-                            }
+                    Some((_, ref mut loc)) => match loc {
+                        Some(ref mut value) => {
+                            let old_value_loc = self.heap.push(HeapCellValue::Addr(*value));
+                            self.trail(TrailRef::BlackboardOffset(key_h, old_value_loc));
+                            *value = new_value;
                         }
-                    }
+                        loc @ None => {
+                            self.trail(TrailRef::BlackboardEntry(key_h));
+                            *loc = Some(new_value);
+                        }
+                    },
                     None => {
                         self.trail(TrailRef::BlackboardEntry(key_h));
-                        indices.global_variables.insert(key, (Ball::new(), Some(new_value)));
+                        indices
+                            .global_variables
+                            .insert(key, (Ball::new(), Some(new_value)));
                     }
                 }
             }
@@ -4660,8 +4769,12 @@ impl MachineState {
                 (self.unify_fn)(self, listing, listing_var);
             }
             &SystemClauseType::WriteTerm => {
-                let mut stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "write_term", 3)?;
+                let mut stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "write_term",
+                    3,
+                )?;
 
                 self.check_stream_properties(
                     &mut stream,
@@ -5251,6 +5364,12 @@ impl MachineState {
                 let key = self.heap_pstr_iter(self[temp_v!(1)]).to_string();
                 env::remove_var(key);
             }
+            &SystemClauseType::PID => {
+                let a1 = self[temp_v!(1)];
+                let pid = process::id();
+                let addr = self.heap.put_constant(Constant::Integer(Rc::new(Integer::from(pid))));
+                (self.unify_fn)(self, a1, addr);
+            }
             &SystemClauseType::CharsBase64 => {
                 let padding = self.atom_argument_to_string(3);
                 let charset = self.atom_argument_to_string(4);
@@ -5347,8 +5466,12 @@ impl MachineState {
                 }
             }
             &SystemClauseType::DevourWhitespace => {
-                let stream =
-                    self.get_stream_or_alias(self[temp_v!(1)], indices, "$devour_whitespace", 1)?;
+                let stream = self.get_stream_or_alias(
+                    self[temp_v!(1)],
+                    &indices.stream_aliases,
+                    "$devour_whitespace",
+                    1,
+                )?;
 
                 match self.devour_whitespace(stream, self.atom_tbl.clone()) {
                     Ok(false) => {} // not at EOF.
@@ -5360,21 +5483,23 @@ impl MachineState {
             }
             &SystemClauseType::IsSTOEnabled => {
                 if self.unify_fn as usize == MachineState::unify_with_occurs_check as usize {
-                    let value = self.heap.to_unifiable(
-                        HeapCellValue::Atom(clause_name!("true"), None),
-                    );
+                    let value = self
+                        .heap
+                        .to_unifiable(HeapCellValue::Atom(clause_name!("true"), None));
 
                     (self.unify_fn)(self, self[temp_v!(1)], value);
-                } else if self.unify_fn as usize == MachineState::unify_with_occurs_check_with_error as usize {
-                    let value = self.heap.to_unifiable(
-                        HeapCellValue::Atom(clause_name!("error"), None),
-                    );
+                } else if self.unify_fn as usize
+                    == MachineState::unify_with_occurs_check_with_error as usize
+                {
+                    let value = self
+                        .heap
+                        .to_unifiable(HeapCellValue::Atom(clause_name!("error"), None));
 
                     (self.unify_fn)(self, self[temp_v!(1)], value);
                 } else {
-                    let value = self.heap.to_unifiable(
-                        HeapCellValue::Atom(clause_name!("false"), None),
-                    );
+                    let value = self
+                        .heap
+                        .to_unifiable(HeapCellValue::Atom(clause_name!("false"), None));
 
                     (self.unify_fn)(self, self[temp_v!(1)], value);
                 }
@@ -5413,6 +5538,19 @@ impl MachineState {
             }
             &SystemClauseType::DebugHook => {
                 self.fail = false;
+            }
+            &SystemClauseType::PopCount => {
+                let number  = self.store(self.deref(self[temp_v!(1)]));
+                let count = match Number::try_from((number, &self.heap)) {
+                    Ok(Number::Fixnum(n)) => Integer::from(n.count_ones()),
+                    Ok(Number::Integer(n)) => Integer::from((&*n).count_ones().unwrap()),
+                    _ => {
+                        unreachable!()
+                    }
+                };
+
+                let pop_count = self.heap.to_unifiable(HeapCellValue::Integer(Rc::new(count)));
+                (self.unify_fn)(self, self[temp_v!(2)], pop_count);
             }
         };
 
