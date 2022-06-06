@@ -44,7 +44,7 @@ lazy_static = "1.4.0"
 lexical = "5.2.2"
 libc = "0.2.62"
 modular-bitfield = { git = "https://github.com/mthom/modular-bitfield" } # modular-bitfield = "0.11.2"
-nix = "0.15.0"
+nix = "0.22.2"
 num-rug-adapter = { optional = true, path = "./crates/num-rug-adapter" }
 ordered-float = "2.1.1"
 phf = { version = "0.9",  features = ["macros"] }
